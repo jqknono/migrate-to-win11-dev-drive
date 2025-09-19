@@ -1,0 +1,106 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create release'
+        required: true
+        default: 'true'
+        type: boolean
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Extract version from script
+      id: extract_version
+      shell: pwsh
+      run: |
+        $versionLine = Select-String -Path "Setup-DevDriveCache.ps1" -Pattern "\$script:ScriptVersion = "
+        if ($versionLine) {
+          $version = $versionLine.Line -replace '.*"([^"]+)".*', '$1'
+          echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          echo "Extracted version: $version"
+        } else {
+          echo "Version not found in script"
+          exit 1
+        }
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ env.VERSION }}
+        name: Dev Drive Cache Migration Script v${{ env.VERSION }}
+        body: |
+          ## Dev Drive Cache Migration Script v${{ env.VERSION }}
+
+          This PowerShell script helps developers migrate their package caches to Dev Drive for improved performance on Windows 11.
+
+          ### Features
+          - Interactive menu system for cache migration
+          - Support for multiple Dev Drives with automatic selection
+          - Safe migration with rollback capabilities
+          - Restore functionality to return caches to original locations
+          - Debug mode for testing and troubleshooting
+          - Comprehensive hidden folder scanning and migration
+          - Automatic symlink/junction creation with fallback support
+
+          ### Supported Cache Types
+          - Node.js (npm, yarn, pnpm)
+          - Python (pip)
+          - .NET (NuGet)
+          - Java (Maven, Gradle)
+          - Go (Go modules)
+          - Rust (Cargo)
+          - VS Code extensions
+          - Windows TEMP/TMP directories
+          - JetBrains IDE cache
+          - Android SDK cache
+          - Chocolatey cache
+          - Hidden folders (.xxx)
+
+          ### Requirements
+          - Windows 11 (Build 22000 or higher)
+          - PowerShell 7+ (pwsh)
+          - Dev Drive (ReFS filesystem)
+
+          ### Usage
+          ```powershell
+          pwsh.exe -File Setup-DevDriveCache.ps1
+          ```
+
+          ### Parameters
+          - `-DevDrivePath "D:\"` - Specify Dev Drive path
+          - `-DebugMode` - Enable debug mode
+          - `-Lang "en"` - Set language (en/zh)
+          - `-Version` - Show version info
+
+          **Note**: This script only migrates cache folders using symbolic links and does not modify environment variables.
+        files: |
+          Setup-DevDriveCache.ps1
+          README.md
+          CLAUDE.md
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload PowerShell Script as Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: DevDriveCacheScript-v${{ env.VERSION }}
+        path: |
+          Setup-DevDriveCache.ps1
+          README.md
+          CLAUDE.md
+        retention-days: 30

@@ -1,0 +1,2 @@
+- 使用pwsh.exe测试, 不要使用powershell.exe测试.
+- 进度条文字显示只支持英文
