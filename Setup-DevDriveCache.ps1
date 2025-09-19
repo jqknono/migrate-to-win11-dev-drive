@@ -81,8 +81,6 @@ Dev Drive Cache Migration Script
     
     Author: Dev Drive Setup Script
     
-    Version: 1.0.3 - Dev Drive Removal Version
-    
     OS Requirements: Windows 11 (Build 22000 or higher)
 #>
 
@@ -97,7 +95,7 @@ param(
 $script:CurrentLanguage = $Lang
 
 # Script version
-$script:ScriptVersion = "1.0.3"
+$script:ScriptVersion = "v0.0.1"
 
 $script:Strings = @{
     # Script header information
@@ -2177,7 +2175,7 @@ function Invoke-Main {
     # Handle version parameter
     if ($Version) {
         Write-ColoredOutput "Dev Drive Cache Migration Script v$script:ScriptVersion" [Colors]::Info
-        Write-ColoredOutput "Dev Drive Removal Version" [Colors]::Info
+        Write-ColoredOutput "Dev Drive Migration Version" [Colors]::Info
         return
     }
 
