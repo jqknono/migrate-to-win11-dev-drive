@@ -1546,7 +1546,7 @@ function Get-DevDrivePath {
         if (Test-Path $ProvidedPath) {
             $driveLetter = Split-Path $ProvidedPath -Qualifier
             $driveInfo = Get-Volume -DriveLetter $driveLetter.TrimEnd(':')
-            if ($driveInfo.FileSystem -eq "ReFS") {
+            if ($driveInfo -and $driveInfo.FileSystem -eq "ReFS") {
                 Write-ColoredOutput (Get-String -Key "DevDrive.PathProvided" -Arguments @($ProvidedPath)) [Colors]::Success
                 return $ProvidedPath
             } else {
@@ -1560,11 +1560,14 @@ function Get-DevDrivePath {
 
     Write-ColoredOutput (Get-String -Key "DevDrive.Detecting") [Colors]::Info
 
-    $devDrives = Get-Volume | Where-Object {
+    # Ensure result is always an array to avoid null indexing
+    $devDrives = @(
+        Get-Volume | Where-Object {
         $_.FileSystem -eq "ReFS" -and
         $_.DriveType -eq "Fixed" -and
         $_.DriveLetter
-    } | Sort-Object DriveLetter
+        } | Sort-Object DriveLetter
+    )
 
     if ($devDrives.Count -eq 0) {
         Write-ColoredOutput (Get-String -Key "DevDrive.NotFound") [Colors]::Error
