@@ -13,6 +13,9 @@ on:
         default: 'false'
         type: boolean
 
+permissions:
+  contents: write
+
 jobs:
   check-and-release:
     runs-on: windows-latest
