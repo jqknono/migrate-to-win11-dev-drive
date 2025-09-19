@@ -40,15 +40,15 @@ Dev Drive Cache Migration Script
     - Support for multiple Dev Drives with automatic selection
     - Safe migration with rollback capabilities
     - Restore functionality to return caches to original locations
-    - Debug mode for testing and troubleshooting
+    - Dry-run mode to preview actions without making changes
     - Comprehensive hidden folder scanning and migration
     - Automatic symlink/junction creation with fallback support
 
 .PARAMETER DevDrivePath
     Specifies the path to the Dev Drive. If not provided, the script will attempt to auto-detect it.
 
-.PARAMETER DebugMode
-    Enable debug mode with additional options and verbose output.
+.PARAMETER DryRun
+    Perform a dry run: show planned steps and outputs without making any changes.
 
 .PARAMETER Version
     Display script version information and exit.
@@ -66,11 +66,11 @@ Dev Drive Cache Migration Script
 
 .EXAMPLE
     .\Setup-DevDriveCache.ps1 -Lang "en"
-    Run the script in English mode.
+    Run the script in English mode (default).
 
 .EXAMPLE
     .\Setup-DevDriveCache.ps1 -Lang "zh"
-    Run the script in Chinese mode (default).
+    Run the script in Chinese mode.
 
 .EXAMPLE
     .\Setup-DevDriveCache.ps1 -Version
@@ -86,7 +86,7 @@ Dev Drive Cache Migration Script
 
 param(
     [string]$DevDrivePath = "",
-    [switch]$DebugMode,
+    [switch]$DryRun,
     [switch]$Version,
     [ValidateSet('zh', 'en')][string]$Lang = 'en'
 )
@@ -95,7 +95,7 @@ param(
 $script:CurrentLanguage = $Lang
 
 # Script version
-$script:ScriptVersion = "v0.0.1"
+$script:ScriptVersion = "v0.0.2"
 
 $script:Strings = @{
     # Script header information
@@ -1069,7 +1069,7 @@ $script:Strings = @{
     CacheMenuEx = @{
         Options = @{
             OptMigrateDotFolders = @{ zh = "D       用户临时文件迁移 (.xxx)"; en = "D       User Temp Files Migration (.xxx)" }
-            OptUndoAll = @{ zh = "U       撤销/移除所有迁移（调试模式）"; en = "U       Undo/Remove All Migrations (Debug Mode)" }
+            # OptUndoAll removed from UI (no global undo in this build)
             OptQuit = @{ zh = "Q       退出"; en = "Q       Quit" }
         }
         SelectionPrompt = @{
@@ -1095,9 +1095,9 @@ $script:Strings = @{
         OperationDetails = @{ zh = "   📂 文件夹迁移操作详情："; en = "   📂 Folder Migration Operation Details:" }
         SourcePath = @{ zh = "      源路径：{0}"; en = "      Source Path: {0}" }
         TargetPath = @{ zh = "      目标路径：{0}"; en = "      Target Path: {0}" }
-        OperationLabel = @{ zh = "      操作：将文件复制到 Dev Drive，删除源目录，创建符号链接"; en = "      Operation: Copy files to Dev Drive, delete source directory, create symbolic link" }
+        OperationLabel = @{ zh = "      操作：1) 创建目标目录  2) 复制到 Dev Drive  3) 删除源目录  4) 创建符号链接"; en = "      Operation: 1) Create target directory  2) Copy files to Dev Drive  3) Delete source directory  4) Create symbolic link" }
         CacheType = @{ zh = "      缓存类型：{0}"; en = "      Cache Type: {0}" }
-        OperationLabelSimple = @{ zh = "      操作：将文件复制到 Dev Drive，创建符号链接"; en = "      Operation: Copy files to Dev Drive, create symbolic link" }
+        OperationLabelSimple = @{ zh = "      操作：1) 创建目标目录  2) 复制到 Dev Drive  3) 创建符号链接"; en = "      Operation: 1) Create target directory  2) Copy files to Dev Drive  3) Create symbolic link" }
         ConfirmFolder = @{ zh = "   确认迁移文件夹 {0}？ (Y/N)"; en = "   Confirm migration of folder {0}? (Y/N)" }
         FolderCancelled = @{ zh = "   ❌ Migration of folder {0} cancelled"; en = "   ❌ Migration of folder {0} cancelled" }
         CreatingSymbolicLink = @{ zh = "   Creating symbolic link: {0} -> {1}"; en = "   Creating symbolic link: {0} -> {1}" }
@@ -1109,6 +1109,21 @@ $script:Strings = @{
         CreatingTargetDirectory = @{ zh = "   Creating target directory: {0}"; en = "   Creating target directory: {0}" }
         WarningFailedMoveCopy = @{ zh = "   Warning: Failed to move/copy contents; restored empty folder only."; en = "   Warning: Failed to move/copy contents; restored empty folder only." }
         CleaningUpCacheFolder = @{ zh = "   Cleaning up cache folder: {0}"; en = "   Cleaning up cache folder: {0}" }
+        # Multi-line operation header
+        OperationTitle = @{ zh = "      操作："; en = "      Operation:" }
+        OperationLine1 = @{ zh = "      1) 创建目标目录"; en = "      1) Create target directory" }
+        OperationLine2 = @{ zh = "      2) 复制到 Dev Drive"; en = "      2) Copy files to Dev Drive" }
+        OperationLine3 = @{ zh = "      3) 删除源目录"; en = "      3) Delete source directory" }
+        OperationLine4 = @{ zh = "      4) 创建符号链接"; en = "      4) Create symbolic link" }
+        # Step plan and dry-run labels
+        StepsHeader = @{ zh = "      步骤："; en = "      Steps:" }
+        Step1CreateTarget = @{ zh = "      第 1/4 步：创建目标目录：{0}"; en = "      Step 1/4: Create target directory: {0}" }
+        Step2Copy = @{ zh = "      第 2/4 步：复制到目标：{0} -> {1}"; en = "      Step 2/4: Copy to target: {0} -> {1}" }
+        Step3DeleteSource = @{ zh = "      第 3/4 步：删除源目录：{0}"; en = "      Step 3/4: Delete source directory: {0}" }
+        Step4CreateLink = @{ zh = "      第 4/4 步：创建符号链接：{0} -> {1}"; en = "      Step 4/4: Create symbolic link: {0} -> {1}" }
+        OperationNumbered = @{ zh = "      操作：1) 创建目标目录  2) 复制到 Dev Drive  3) 删除源目录  4) 创建符号链接"; en = "      Operation: 1) Create target directory  2) Copy files to Dev Drive  3) Delete source directory  4) Create symbolic link" }
+        DryRunNote = @{ zh = "      （演练模式）不会进行任何更改。"; en = "      (Dry-run) No changes will be made." }
+        StartingCopy = @{ zh = "   正在复制：{0} -> {1}"; en = "   Starting copy: {0} -> {1}" }
         # (restore-related labels moved under Restore)
     }
 
@@ -1427,6 +1442,7 @@ function Show-Header {
     Write-ColoredOutput (Get-String -Key "ScriptHeader.EmptyLine") [Colors]::Warning
     Write-ColoredOutput (Get-String -Key "ScriptHeader.ImportantWarning") [Colors]::Warning
     Write-ColoredOutput (Get-String -Key "DevDrive.CurrentVersion" -Arguments @($script:ScriptVersion)) [Colors]::Info
+    if ($DryRun) { Write-ColoredOutput "DRY-RUN MODE: No changes will be made" [Colors]::Warning }
     Write-Host ""
 }
 
@@ -1617,9 +1633,6 @@ function Show-CacheMenuEx {
   
     Write-Host ""
     Write-ColoredOutput (Get-String -Key "CacheMenuEx.Options.OptMigrateDotFolders") [Colors]::Menu
-    if ($DebugMode) {
-        Write-ColoredOutput (Get-String -Key "CacheMenuEx.Options.OptUndoAll") [Colors]::Menu
-    }
     Write-ColoredOutput (Get-String -Key "CacheMenuEx.Options.OptQuit") [Colors]::Menu
     Write-Host ""
 }
@@ -1640,7 +1653,7 @@ function Show-CacheDetails {
         if (Test-Path $config.DefaultPath) {
             if (Test-IsDirectoryLink -Path $config.DefaultPath) {
                 Write-ColoredOutput (Get-String -Key "CacheDetails.StatusMigrated") [Colors]::Success
-            } elseif (-not $DebugMode) {
+            } elseif (-not $DryRun) {
                 $size = (Get-ChildItem $config.DefaultPath -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
                 if ($size) {
                     $sizeGB = [math]::Round($size / 1GB, 2)
@@ -1712,7 +1725,12 @@ function Migrate-FolderWithLink {
     Write-ColoredOutput (Get-String -Key "Migration.OperationDetails") [Colors]::Warning
     Write-ColoredOutput (Get-String -Key "Migration.SourcePath" -Arguments @($SourcePath)) [Colors]::Info
     Write-ColoredOutput (Get-String -Key "Migration.TargetPath" -Arguments @($targetPath)) [Colors]::Info
-    Write-ColoredOutput (Get-String -Key "Migration.OperationLabel") [Colors]::Info
+    # Operation summary split across lines
+    Write-ColoredOutput (Get-String -Key "Migration.OperationTitle") [Colors]::Info
+    Write-ColoredOutput (Get-String -Key "Migration.OperationLine1") [Colors]::Info
+    Write-ColoredOutput (Get-String -Key "Migration.OperationLine2") [Colors]::Info
+    Write-ColoredOutput (Get-String -Key "Migration.OperationLine3") [Colors]::Info
+    Write-ColoredOutput (Get-String -Key "Migration.OperationLine4") [Colors]::Info
 
     # Secondary confirmation (skippable)
     if (-not $SkipConfirmation) {
@@ -1721,6 +1739,18 @@ function Migrate-FolderWithLink {
             Write-ColoredOutput (Get-String -Key "Migration.FolderCancelled" -Arguments @($name)) [Colors]::Warning
             return $false
         }
+    }
+
+    # Dry-run: show the planned steps and exit without changes
+    if ($DryRun) {
+        # Dry-run note first
+        Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning
+        Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step1CreateTarget" -Arguments @($targetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step2Copy" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step3DeleteSource" -Arguments @($SourcePath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step4CreateLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
+        return $true
     }
 
     try {
@@ -1804,6 +1834,14 @@ function Restore-FolderFromLink {
             }
         }
 
+        if ($DryRun) {
+            Write-ColoredOutput (Get-String -Key "Restore.Step1RemoveLink" -Arguments @($SourcePath)) [Colors]::Info
+            Write-ColoredOutput (Get-String -Key "Restore.Step2EnsureDir" -Arguments @($dest)) [Colors]::Info
+            Write-ColoredOutput (Get-String -Key "Restore.Step3Restore" -Arguments @($linkTarget, $dest)) [Colors]::Info
+            if ($targetExists) { Write-ColoredOutput (Get-String -Key "Restore.Step4Cleanup" -Arguments @($linkTarget)) [Colors]::Info }
+            Write-ColoredOutput "      (Dry-run) No changes will be made." [Colors]::Warning
+            return $true
+        }
         Write-ColoredOutput (Get-String -Key "Restore.Step1RemoveLink" -Arguments @($SourcePath)) [Colors]::Info
         Remove-Item -LiteralPath $SourcePath -Force -ErrorAction Stop
 
@@ -1877,7 +1915,7 @@ function Invoke-DotFolderMigration {
     Write-ColoredOutput (Get-String -Key "CacheMenuTable.Detail" -Arguments @($idxD, $nameD, $sizeD, $migrD, $pathD)) [Colors]::Header
 
     $nonEmpty = @()
-    if (-not $DebugMode) {
+    if (-not $DryRun) {
         # Calculate size and show scanning progress
         $sizes = @()
         for ($i=0; $i -lt $folders.Count; $i++) {
@@ -1912,7 +1950,7 @@ function Invoke-DotFolderMigration {
             Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($idx, $name, $sizePad, $migratedPad, $dir.FullName)) [Colors]::Info
         }
     } else {
-        # DebugMode: don't calculate sizes, list all
+        # Dry-run: don't calculate sizes, list all
         for ($i=0; $i -lt $folders.Count; $i++) {
             $dir = $folders[$i]
             $nonEmpty += [PSCustomObject]@{ Dir = $dir; SizeBytes = $null }
@@ -1971,7 +2009,7 @@ function Invoke-DotFolderMigration {
 
     $selCount = $selectedIndices.Count
     $totalText = "-"
-    if (-not $DebugMode -and $toMigrate.Count -gt 0) {
+    if (-not $DryRun -and $toMigrate.Count -gt 0) {
         $totalBytes = 0
         foreach ($dir in $toMigrate) {
             try {
@@ -1998,7 +2036,7 @@ function Invoke-DotFolderMigration {
     }
 
     if ($toRestore.Count -eq 0 -and $toMigrate.Count -gt 0) {
-        if (-not $DebugMode) {
+        if (-not $DryRun) {
             Write-ColoredOutput (Get-String -Key "DotFolderOperations.WillMigrate" -Arguments @($toMigrate.Count, $totalText)) [Colors]::Menu
         } else {
             Write-ColoredOutput (Get-String -Key "DotFolderOperations.WillMigrateSimple" -Arguments @($toMigrate.Count)) [Colors]::Menu
@@ -2016,7 +2054,7 @@ function Invoke-DotFolderMigration {
     if ($toRestore.Count -gt 0 -and $toMigrate.Count -gt 0) {
         Write-ColoredOutput (Get-String -Key "DotFolderOperations.WillRestoreSimple" -Arguments @($toRestore.Count)) [Colors]::Menu
         foreach ($d in $toRestore) { Write-ColoredOutput (Get-String -Key "DotFolderOperations.FolderItem" -Arguments @($d.FullName)) [Colors]::Info }
-        if (-not $DebugMode) {
+        if (-not $DryRun) {
             Write-ColoredOutput (Get-String -Key "DotFolderOperations.WillMigrateCaps" -Arguments @($toMigrate.Count, $totalText)) [Colors]::Menu
         } else {
             Write-ColoredOutput (Get-String -Key "DotFolderOperations.WillMigrateCapsSimple" -Arguments @($toMigrate.Count)) [Colors]::Menu
@@ -2056,7 +2094,9 @@ function Move-CacheToDevDrive {
 
     # Create target directory
     if (!(Test-Path $targetPath)) {
-        New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+        if (-not $DryRun) {
+            New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+        }
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.CreatingTarget" -Arguments @($targetPath)) [Colors]::Success
     }
 
@@ -2087,12 +2127,16 @@ function Move-CacheToDevDrive {
         try {
             # For directories, move contents
             if ((Get-Item $sourcePath) -is [System.IO.DirectoryInfo]) {
-                Get-ChildItem $sourcePath | ForEach-Object {
-                    Move-Item $_.FullName $targetPath -Force -ErrorAction Stop
+                if (-not $DryRun) {
+                    Get-ChildItem $sourcePath | ForEach-Object {
+                        Move-Item $_.FullName $targetPath -Force -ErrorAction Stop
+                    }
+                    Remove-Item $sourcePath -Force -ErrorAction SilentlyContinue
                 }
-                Remove-Item $sourcePath -Force -ErrorAction SilentlyContinue
             } else {
-                Move-Item $sourcePath $targetPath -Force -ErrorAction Stop
+                if (-not $DryRun) {
+                    Move-Item $sourcePath $targetPath -Force -ErrorAction Stop
+                }
             }
             Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.MigrationSuccess") [Colors]::Success
         } catch {
@@ -2105,15 +2149,25 @@ function Move-CacheToDevDrive {
     if (-not (Test-IsDirectoryLink -Path $sourcePath)) {
         try {
             if (Test-Path -LiteralPath $sourcePath) {
-                Remove-Item -LiteralPath $sourcePath -Recurse -Force -ErrorAction SilentlyContinue
+                if (-not $DryRun) {
+                    Remove-Item -LiteralPath $sourcePath -Recurse -Force -ErrorAction SilentlyContinue
+                }
             }
             Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
-            New-Item -ItemType SymbolicLink -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-            Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+            if (-not $DryRun) {
+                New-Item -ItemType SymbolicLink -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+                Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+            } else {
+                Write-ColoredOutput "      (Dry-run) Skipping link creation" [Colors]::Warning
+            }
         } catch {
             Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkFailed") [Colors]::Warning
-            New-Item -ItemType Junction -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-            Write-ColoredOutput (Get-String -Key "Migration.JunctionCreated") [Colors]::Success
+            if (-not $DryRun) {
+                New-Item -ItemType Junction -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+                Write-ColoredOutput (Get-String -Key "Migration.JunctionCreated") [Colors]::Success
+            } else {
+                Write-ColoredOutput "      (Dry-run) Skipping junction creation" [Colors]::Warning
+            }
         }
     }
 
@@ -2222,7 +2276,19 @@ function Invoke-Main {
                         Write-ColoredOutput (Get-String -Key "Migration.CacheType" -Arguments @($cfg.Name)) [Colors]::Info
                         Write-ColoredOutput (Get-String -Key "Migration.SourcePath" -Arguments @($cfg.DefaultPath)) [Colors]::Info
                         Write-ColoredOutput (Get-String -Key "Migration.TargetPath" -Arguments @($targetPath)) [Colors]::Info
-                        Write-ColoredOutput (Get-String -Key "Migration.OperationLabelSimple") [Colors]::Info
+                        # Operation summary split across lines
+                        Write-ColoredOutput (Get-String -Key "Migration.OperationTitle") [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.OperationLine1") [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.OperationLine2") [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.OperationLine3") [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.OperationLine4") [Colors]::Info
+                        # Refined step plan
+                        if ($DryRun) { Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning }
+                        Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step1CreateTarget" -Arguments @($targetPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step2Copy" -Arguments @($cfg.DefaultPath, $targetPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step3DeleteSource" -Arguments @($cfg.DefaultPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step4CreateLink" -Arguments @($cfg.DefaultPath, $targetPath)) [Colors]::Info
 
                         # Secondary confirmation
                         $confirm = Read-Host (Get-String -Key "Migration.ConfirmFolder" -Arguments @($cfg.Name))
@@ -2231,7 +2297,7 @@ function Invoke-Main {
                         } else {
                             try {
                                 Move-CacheToDevDrive $selectedKey $cfg $devDrivePath
-                                $configuredCaches += $cfg
+                                if (-not $DryRun) { $configuredCaches += $cfg }
                             } catch {
                                 Write-ColoredOutput (Get-String -Key "Common.MigrationFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
                             }
