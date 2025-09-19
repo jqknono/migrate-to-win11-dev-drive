@@ -1,0 +1,72 @@
+{
+    "projectTranslator.specifiedFiles": [
+        {
+            "sourceFile": {
+                "path": "README.md",
+                "lang": "zh-cn"
+            },
+            "targetFiles": [
+                {
+                    "path": "README.en-us.md",
+                    "lang": "en-us"
+                },
+                {
+                    "path": "README.zh-tw.md",
+                    "lang": "zh-tw"
+                },
+                {
+                    "path": "README.ja-jp.md",
+                    "lang": "ja-jp"
+                },
+                {
+                    "path": "README.ko-kr.md",
+                    "lang": "ko-kr"
+                },
+                {
+                    "path": "README.fr-fr.md",
+                    "lang": "fr-fr"
+                },
+                {
+                    "path": "README.de-de.md",
+                    "lang": "de-de"
+                },
+                {
+                    "path": "README.it-it.md",
+                    "lang": "it-it"
+                },
+                {
+                    "path": "README.es-es.md",
+                    "lang": "es-es"
+                },
+                {
+                    "path": "README.ru-ru.md",
+                    "lang": "ru-ru"
+                },
+                {
+                    "path": "README.pt-br.md",
+                    "lang": "pt-br"
+                },
+                {
+                    "path": "README.nl-nl.md",
+                    "lang": "nl-nl"
+                },
+                {
+                    "path": "README.tr-tr.md",
+                    "lang": "tr-tr"
+                },
+                {
+                    "path": "README.ar-sa.md",
+                    "lang": "ar-sa"
+                },
+                {
+                    "path": "README.hi-in.md",
+                    "lang": "hi-in"
+                },
+                {
+                    "path": "README.th-th.md",
+                    "lang": "th-th"
+                }
+            ]
+        }
+    ]
+}

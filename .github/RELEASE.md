@@ -51,9 +51,7 @@ This project uses GitHub Actions to automate the release process. The workflow a
 ## Release Contents
 
 Each release includes:
-- `Setup-DevDriveCache.ps1` - Main script
-- `README.md` - Project documentation
-- `CLAUDE.md` - Claude-specific instructions
+- `Setup-DevDriveCache.ps1` - Main script only
 
 ## Version Format
 

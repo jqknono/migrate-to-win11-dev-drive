@@ -140,8 +140,6 @@ jobs:
           **Note**: This script only migrates cache folders using symbolic links and does not modify environment variables.
         files: |
           Setup-DevDriveCache.ps1
-          README.md
-          CLAUDE.md
         draft: false
         prerelease: false
         generate_release_notes: true
@@ -150,11 +148,9 @@ jobs:
 
     - name: Upload PowerShell Script as Artifact
       if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: DevDriveCacheScript-v${{ env.VERSION }}
         path: |
           Setup-DevDriveCache.ps1
-          README.md
-          CLAUDE.md
         retention-days: 30
