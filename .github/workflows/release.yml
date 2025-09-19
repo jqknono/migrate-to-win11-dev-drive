@@ -32,7 +32,7 @@ jobs:
           $version = $versionLine.Line -replace '.*"([^"]+)".*', '$1'
           echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           echo "version=$version" >> $env:GITHUB_OUTPUT
-          echo "tag_name=v$version" >> $env:GITHUB_OUTPUT
+          echo "tag_name=$version" >> $env:GITHUB_OUTPUT
           echo "Extracted version: $version"
         } else {
           echo "Version not found in script"
@@ -43,7 +43,13 @@ jobs:
       id: check_tag
       shell: pwsh
       run: |
-        $tagName = "v${{ env.VERSION }}"
+        $version = "${{ steps.extract_version.outputs.version }}"
+        if (-not $version) {
+          echo "Error: Version not extracted properly"
+          exit 1
+        }
+        $tagName = "v$version"
+        echo "Checking for tag: $tagName"
         $existingTag = git tag -l $tagName
         if ($existingTag) {
           echo "Tag $tagName already exists"
@@ -65,14 +71,14 @@ jobs:
       if: steps.check_tag.outputs.tag_exists == 'true' && (github.event_name != 'workflow_dispatch' || steps.check_force.outputs.force_release != 'true')
       shell: pwsh
       run: |
-        echo "Release skipped: Tag v${{ env.VERSION }} already exists"
+        echo "Release skipped: Tag v${{ steps.extract_version.outputs.version }} already exists"
         echo "To force create a release, run the workflow manually with 'Force create release' option"
 
     - name: Create and push tag
       if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
       shell: pwsh
       run: |
-        $tagName = "v${{ env.VERSION }}"
+        $tagName = "v${{ steps.extract_version.outputs.version }}"
         echo "Creating tag: $tagName"
 
         # Configure git
@@ -80,7 +86,7 @@ jobs:
         git config --local user.name "GitHub Action"
 
         # Create annotated tag
-        git tag -a $tagName -m "Release version ${{ env.VERSION }}"
+        git tag -a $tagName -m "Release version ${{ steps.extract_version.outputs.version }}"
 
         # Push tag
         git push origin $tagName
@@ -92,9 +98,9 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         tag_name: ${{ steps.extract_version.outputs.tag_name }}
-        name: Dev Drive Cache Migration Script v${{ env.VERSION }}
+        name: Dev Drive Cache Migration Script v${{ steps.extract_version.outputs.version }}
         body: |
-          ## Dev Drive Cache Migration Script v${{ env.VERSION }}
+          ## Dev Drive Cache Migration Script v${{ steps.extract_version.outputs.version }}
 
           This PowerShell script helps developers migrate their package caches to Dev Drive for improved performance on Windows 11.
 
@@ -150,7 +156,7 @@ jobs:
       if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
       uses: actions/upload-artifact@v4
       with:
-        name: DevDriveCacheScript-v${{ env.VERSION }}
+        name: DevDriveCacheScript-v${{ steps.extract_version.outputs.version }}
         path: |
           Setup-DevDriveCache.ps1
         retention-days: 30
