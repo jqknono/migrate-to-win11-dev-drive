@@ -1073,8 +1073,8 @@ $script:Strings = @{
             OptQuit = @{ zh = "Q       退出"; en = "Q       Quit" }
         }
         SelectionPrompt = @{
-            zh = "选择：1-{0}=按编号，D=点文件夹(.xxx)，Q=退出："
-            en = "Select: 1-{0}=By number, D=Dot Folders(.xxx), Q=Quit:"
+            zh = "选择：1-{0}=按编号，D=点文件夹(.xxx)，Q=退出"
+            en = "Select: 1-{0}=By number, D=Dot Folders(.xxx), Q=Quit"
         }
     }
 
@@ -1277,18 +1277,9 @@ class Colors {
 
 # Cache configuration data - Ordered for consistent menu display
 $CacheConfigs = [ordered]@{
-    "cargo" = @{
-        Name = "Rust Cargo Cache"
-        EnvVar = "CARGO_HOME"
-        DefaultPath = "$env:USERPROFILE\.cargo"
-        Description = "Rust Cargo Package Cache"
-    }
-    "nuget" = @{
-        Name = "NuGet Cache"
-        EnvVar = "NUGET_PACKAGES"
-        DefaultPath = "$env:USERPROFILE\.nuget\packages"
-        Description = ".NET NuGet Package Cache"
-    }
+    # Note: Dot-folders under the user profile (e.g. .cargo, .nuget, .m2, .gradle, .vscode)
+    # are intentionally excluded from this main list. They are handled via
+    # "User Temp Files Migration (.xxx)" (Invoke-DotFolderMigration).
     "npm" = @{
         Name = "Node.js npm Cache"
         EnvVar = "npm_config_cache"
@@ -1313,29 +1304,11 @@ $CacheConfigs = [ordered]@{
         DefaultPath = "$env:APPDATA\pip\Cache"
         Description = "Python pip Package Cache"
     }
-    "maven" = @{
-        Name = "Maven Repository"
-        EnvVar = "MAVEN_OPTS"
-        DefaultPath = "$env:USERPROFILE\.m2"
-        Description = "Apache Maven Local Repository"
-    }
-    "gradle" = @{
-        Name = "Gradle Cache"
-        EnvVar = "GRADLE_USER_HOME"
-        DefaultPath = "$env:USERPROFILE\.gradle"
-        Description = "Gradle Build Cache and Dependencies"
-    }
     "go" = @{
         Name = "Go Modules Cache"
         EnvVar = "GOPROXY"
         DefaultPath = "$env:USERPROFILE\go\pkg\mod"
         Description = "Go Modules Cache"
-    }
-    "vscode" = @{
-        Name = "VS Code Extensions"
-        EnvVar = ""
-        DefaultPath = "$env:USERPROFILE\.vscode\extensions"
-        Description = "Visual Studio Code Extensions"
     }
     "temp" = @{
         Name = "Windows TEMP/TMP"

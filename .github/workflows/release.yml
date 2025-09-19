@@ -25,71 +25,65 @@ jobs:
 
     - name: Extract version from script
       id: extract_version
-      shell: pwsh
+      shell: bash
       run: |
-        $versionLine = Select-String -Path "Setup-DevDriveCache.ps1" -Pattern "\$script:ScriptVersion = "
-        if ($versionLine) {
-          $version = $versionLine.Line -replace '.*"([^"]+)".*', '$1'
-          echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "version=$version" >> $env:GITHUB_OUTPUT
-          echo "tag_name=$version" >> $env:GITHUB_OUTPUT
+        versionLine=$(grep -m1 -E '^\$script:ScriptVersion[[:space:]]*=' Setup-DevDriveCache.ps1 || true)
+        if [[ -n "$versionLine" ]]; then
+          version=$(printf '%s\n' "$versionLine" | sed -n 's/.*"\([^"]*\)".*/\1/p')
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$version" >> "$GITHUB_OUTPUT"
           echo "Extracted version: $version"
-        } else {
+        else
           echo "Version not found in script"
           exit 1
-        }
+        fi
 
     - name: Check if tag exists
       id: check_tag
-      shell: pwsh
+      shell: bash
       run: |
-        $version = "${{ steps.extract_version.outputs.version }}"
-        if (-not $version) {
-          echo "Error: Version not extracted properly"
+        tagName="${{ steps.extract_version.outputs.tag_name }}"
+        if [[ -z "$tagName" ]]; then
+          echo "Error: Tag name not extracted properly"
           exit 1
-        }
-        $tagName = "v$version"
+        fi
         echo "Checking for tag: $tagName"
-        $existingTag = git tag -l $tagName
-        if ($existingTag) {
+        if git rev-parse -q --verify "refs/tags/$tagName" >/dev/null; then
           echo "Tag $tagName already exists"
-          echo "tag_exists=true" >> $env:GITHUB_OUTPUT
-        } else {
+          echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+        else
           echo "Tag $tagName does not exist"
-          echo "tag_exists=false" >> $env:GITHUB_OUTPUT
-        }
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Check for forced release
       id: check_force
       if: github.event_name == 'workflow_dispatch'
-      shell: pwsh
+      shell: bash
       run: |
-        $forceRelease = "${{ github.event.inputs.force_release }}"
-        echo "force_release=$forceRelease" >> $env:GITHUB_OUTPUT
+        forceRelease="${{ github.event.inputs.force_release }}"
+        echo "force_release=$forceRelease" >> "$GITHUB_OUTPUT"
 
     - name: Skip release if tag exists
       if: steps.check_tag.outputs.tag_exists == 'true' && (github.event_name != 'workflow_dispatch' || steps.check_force.outputs.force_release != 'true')
-      shell: pwsh
+      shell: bash
       run: |
-        echo "Release skipped: Tag v${{ steps.extract_version.outputs.version }} already exists"
+        echo "Release skipped: Tag ${{ steps.extract_version.outputs.tag_name }} already exists"
         echo "To force create a release, run the workflow manually with 'Force create release' option"
 
     - name: Create and push tag
       if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
-      shell: pwsh
+      shell: bash
       run: |
-        $tagName = "v${{ steps.extract_version.outputs.version }}"
+        tagName="${{ steps.extract_version.outputs.tag_name }}"
         echo "Creating tag: $tagName"
 
-        # Configure git
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
 
-        # Create annotated tag
-        git tag -a $tagName -m "Release version ${{ steps.extract_version.outputs.version }}"
-
-        # Push tag
-        git push origin $tagName
+        git tag -a "$tagName" -m "Release version ${{ steps.extract_version.outputs.version }}"
+        git push origin "$tagName"
 
         echo "Tag $tagName created and pushed successfully"
 
