@@ -1,0 +1,159 @@
+name: Auto Create Release
+
+on:
+  push:
+    branches: [ main, master ]
+    # paths:
+    #   - 'Setup-DevDriveCache.ps1'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force create release even if tag exists'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-release:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for tag checking
+
+    - name: Extract version from script
+      id: extract_version
+      shell: bash
+      run: |
+        versionLine=$(grep -m1 -E '^\$script:ScriptVersion[[:space:]]*=' Setup-DevDriveCache.ps1 || true)
+        if [[ -n "$versionLine" ]]; then
+          version=$(printf '%s\n' "$versionLine" | sed -n 's/.*"\([^"]*\)".*/\1/p')
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$version" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $version"
+        else
+          echo "Version not found in script"
+          exit 1
+        fi
+
+    - name: Check if tag exists
+      id: check_tag
+      shell: bash
+      run: |
+        tagName="${{ steps.extract_version.outputs.tag_name }}"
+        if [[ -z "$tagName" ]]; then
+          echo "Error: Tag name not extracted properly"
+          exit 1
+        fi
+        echo "Checking for tag: $tagName"
+        if git rev-parse -q --verify "refs/tags/$tagName" >/dev/null; then
+          echo "Tag $tagName already exists"
+          echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "Tag $tagName does not exist"
+          echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Check for forced release
+      id: check_force
+      if: github.event_name == 'workflow_dispatch'
+      shell: bash
+      run: |
+        forceRelease="${{ github.event.inputs.force_release }}"
+        echo "force_release=$forceRelease" >> "$GITHUB_OUTPUT"
+
+    - name: Skip release if tag exists
+      if: steps.check_tag.outputs.tag_exists == 'true' && (github.event_name != 'workflow_dispatch' || steps.check_force.outputs.force_release != 'true')
+      shell: bash
+      run: |
+        echo "Release skipped: Tag ${{ steps.extract_version.outputs.tag_name }} already exists"
+        echo "To force create a release, run the workflow manually with 'Force create release' option"
+
+    - name: Create and push tag
+      if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
+      shell: bash
+      run: |
+        tagName="${{ steps.extract_version.outputs.tag_name }}"
+        echo "Creating tag: $tagName"
+
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+
+        git tag -a "$tagName" -m "Release version ${{ steps.extract_version.outputs.version }}"
+        git push origin "$tagName"
+
+        echo "Tag $tagName created and pushed successfully"
+
+    - name: Create Release
+      if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.extract_version.outputs.tag_name }}
+        name: Dev Drive Cache Migration Script ${{ steps.extract_version.outputs.tag_name }}
+        body: |
+          ## Dev Drive Cache Migration Script ${{ steps.extract_version.outputs.tag_name }}
+
+          This PowerShell script helps developers migrate their package caches to Dev Drive for improved performance on Windows 11.
+
+          ### Features
+          - Interactive menu system for cache migration
+          - Support for multiple Dev Drives with automatic selection
+          - Safe migration with rollback capabilities
+          - Restore functionality to return caches to original locations
+          - Debug mode for testing and troubleshooting
+          - Comprehensive hidden folder scanning and migration
+          - Automatic symlink/junction creation with fallback support
+
+          ### Supported Cache Types
+          - Node.js (npm, yarn, pnpm)
+          - Python (pip)
+          - .NET (NuGet)
+          - Java (Maven, Gradle)
+          - Go (Go modules)
+          - Rust (Cargo)
+          - VS Code extensions
+          - Windows TEMP/TMP directories
+          - JetBrains IDE cache
+          - Android SDK cache
+          - Chocolatey cache
+          - Hidden folders (.xxx)
+
+          ### Requirements
+          - Windows 11 (Build 22000 or higher)
+          - PowerShell 7+ (pwsh)
+          - Dev Drive (ReFS filesystem)
+
+          ### Usage
+          ```powershell
+          pwsh.exe -File Setup-DevDriveCache.ps1
+          ```
+
+          ### Parameters
+          - `-DevDrivePath "D:\"` - Specify Dev Drive path
+          - `-DebugMode` - Enable debug mode
+          - `-Lang "en"` - Set language (en/zh)
+          - `-Version` - Show version info
+
+          **Note**: This script only migrates cache folders using symbolic links and does not modify environment variables.
+        files: |
+          Setup-DevDriveCache.ps1
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload PowerShell Script as Artifact
+      if: steps.check_tag.outputs.tag_exists == 'false' || (github.event_name == 'workflow_dispatch' && steps.check_force.outputs.force_release == 'true')
+      uses: actions/upload-artifact@v4
+      with:
+        name: DevDriveCacheScript-${{ steps.extract_version.outputs.tag_name }}
+        path: |
+          Setup-DevDriveCache.ps1
+        retention-days: 30
