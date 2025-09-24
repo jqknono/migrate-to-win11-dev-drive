@@ -95,7 +95,21 @@ param(
 $script:CurrentLanguage = $Lang
 
 # Script version
-$script:ScriptVersion = "v0.0.2"
+$script:ScriptVersion = "v0.0.3"
+
+# Progress IDs used for Write-Progress so we can reliably clear stale bars
+$script:ProgressIds = @{
+    Copy        = 1001
+    Move        = 1002
+    ScanFolders = 1003
+}
+
+# Ensure any lingering progress UI from previous operations is cleared
+function Reset-ProgressUI {
+    try { Write-Progress -Id $script:ProgressIds.Copy -Completed } catch {}
+    try { Write-Progress -Id $script:ProgressIds.Move -Completed } catch {}
+    try { Write-Progress -Id $script:ProgressIds.ScanFolders -Completed } catch {}
+}
 
 $script:Strings = @{
     # Script header information
@@ -1081,7 +1095,7 @@ $script:Strings = @{
         DefaultPath = @{ zh = "   默认路径：{0}"; en = "   Default Path: {0}" }
         StatusMigrated = @{ zh = "   状态：已迁移（检测到链接）"; en = "   Status: Migrated (link detected)" }
         CurrentSize = @{ zh = "   当前大小：{0} GB"; en = "   Current Size: {0} GB" }
-        CurrentSizeDebug = @{ zh = "   当前大小：-（调试模式）"; en = "   Current Size: - (DebugMode)" }
+        CurrentSizeDebug = @{ zh = "   当前大小：-（调试模式）"; en = "   Current Size: - (DryRun)" }
         StatusPathNotExist = @{ zh = "   状态：路径不存在"; en = "   Status: Path does not exist" }
     }
 
@@ -1430,6 +1444,7 @@ function Format-FixedWidth {
 # Env var backup removed: script does not back up environment variables
 
 function Show-Header {
+    Reset-ProgressUI
     Clear-Host
     Write-ColoredOutput (Get-String -Key "ScriptHeader.BoxTop") [Colors]::Header
     Write-ColoredOutput (Get-String -Key "ScriptHeader.LineTitle" -Arguments @(Get-String -Key "ScriptHeader.Title")) [Colors]::Header
@@ -1615,10 +1630,7 @@ function Show-CacheMenuEx {
         if ($exists) { $isLinked = Test-IsDirectoryLink -Path $config.DefaultPath }
         # Symlink-only mode: treat as migrated only when directory link is detected
         $status = if (-not $exists) { 'Missing' } else { 'Exists' }
-        $paddedIndex = "{0,2}" -f $index
-        $paddedName = "{0,-20}" -f $config.Name
-        $paddedStatus = "{0,-12}" -f $status
-        $displayPath = if ($config.DefaultPath -and $config.DefaultPath.Length -gt 50) { "…" + $config.DefaultPath.Substring($config.DefaultPath.Length-49) } else { $config.DefaultPath }
+        # compute display fields
         $isMigrated = $isLinked
         $migratedText = $isMigrated ? 'Yes' : 'No'
         $nameDisp = Format-FixedWidth -Text $config.Name -Width 20 -Align Left
@@ -1708,20 +1720,24 @@ function Copy-DirectoryWithProgress {
     $total = if ($files) { $files.Count } else { 0 }
     if ($total -eq 0) { return }
 
-    for ($i = 0; $i -lt $total; $i++) {
-        $f = $files[$i]
-        $rel = try { $f.FullName.Substring($SourcePath.Length).TrimStart('\\','/') } catch { $f.Name }
-        $destFile = Join-Path $DestinationPath $rel
-        $destDir = Split-Path -Path $destFile -Parent
-        if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+    $progressId = $script:ProgressIds.Copy
+    try {
+        for ($i = 0; $i -lt $total; $i++) {
+            $f = $files[$i]
+            $rel = try { $f.FullName.Substring($SourcePath.Length).TrimStart('\\','/') } catch { $f.Name }
+            $destFile = Join-Path $DestinationPath $rel
+            $destDir = Split-Path -Path $destFile -Parent
+            if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-        $pct = [int]((($i + 1) / $total) * 100)
-        # Use ASCII-friendly activity/status text for broad host compatibility
-        Write-Progress -Activity "Copying files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
+            $pct = [int]((($i + 1) / $total) * 100)
+            # Use ASCII-friendly activity/status text for broad host compatibility
+            Write-Progress -Id $progressId -Activity "Copying files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
 
-        Copy-Item -LiteralPath $f.FullName -Destination $destFile -Force -ErrorAction Stop
+            Copy-Item -LiteralPath $f.FullName -Destination $destFile -Force -ErrorAction Stop
+        }
+    } finally {
+        Write-Progress -Id $progressId -Activity "Copying files..." -Completed
     }
-    Write-Progress -Activity "Copying files..." -Completed
 }
 
 # Move directory contents with a progress bar using Write-Progress
@@ -1759,28 +1775,34 @@ function Move-DirectoryContentsWithProgress {
         return
     }
 
-    for ($i = 0; $i -lt $total; $i++) {
-        $f = $files[$i]
-        $rel = try { $f.FullName.Substring($SourcePath.Length).TrimStart('\\','/') } catch { $f.Name }
-        $destFile = Join-Path $DestinationPath $rel
-        $destDir = Split-Path -Path $destFile -Parent
-        if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
+    $progressId = $script:ProgressIds.Move
+    try {
+        for ($i = 0; $i -lt $total; $i++) {
+            $f = $files[$i]
+            $rel = try { $f.FullName.Substring($SourcePath.Length).TrimStart('\\','/') } catch { $f.Name }
+            $destFile = Join-Path $DestinationPath $rel
+            $destDir = Split-Path -Path $destFile -Parent
+            if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-        $pct = [int]((($i + 1) / $total) * 100)
-        Write-Progress -Activity "Moving files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
+            $pct = [int]((($i + 1) / $total) * 100)
+            Write-Progress -Id $progressId -Activity "Moving files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
 
-        Move-Item -LiteralPath $f.FullName -Destination $destFile -Force -ErrorAction Stop
+            Move-Item -LiteralPath $f.FullName -Destination $destFile -Force -ErrorAction Stop
+        }
+    } finally {
+        Write-Progress -Id $progressId -Activity "Moving files..." -Completed
     }
-    Write-Progress -Activity "Moving files..." -Completed
 }
 
-function Migrate-FolderWithLink {
+function Move-FolderWithLink {
     param(
         [string]$SourcePath,
         [string]$DevDrivePath,
         [string]$TargetPath,
         [switch]$SkipConfirmation
     )
+
+    Reset-ProgressUI
 
     if (-not (Test-Path -LiteralPath $SourcePath)) {
         Write-ColoredOutput (Get-String -Key "Migration.SourceNotExist" -Arguments @($SourcePath)) [Colors]::Warning
@@ -1841,6 +1863,8 @@ function Migrate-FolderWithLink {
         return $true
     }
 
+    $targetCreated = $false
+    $backupPath = $null
     try {
         if (-not (Test-Path -LiteralPath $targetPath)) {
             $parentDir = Split-Path -Path $targetPath -Parent
@@ -1848,6 +1872,7 @@ function Migrate-FolderWithLink {
                 New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
             }
             New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+            $targetCreated = $true
             Write-ColoredOutput (Get-String -Key "Migration.CreatingTargetDirectory" -Arguments @($targetPath)) [Colors]::Success
         }
 
@@ -1855,22 +1880,53 @@ function Migrate-FolderWithLink {
         Copy-DirectoryWithProgress -SourcePath $SourcePath -DestinationPath $targetPath
         Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
 
-        Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($SourcePath)) [Colors]::Info
-        Remove-Item -LiteralPath $SourcePath -Recurse -Force -ErrorAction Stop -Confirm:$false
+        # Temporarily rename the source folder to allow link creation and enable rollback
+        $parent = Split-Path -Path $SourcePath -Parent
+        $leaf = Split-Path -Path $SourcePath -Leaf
+        $suffix = (Get-Date -Format 'yyyyMMddHHmmss')
+        $backupName = "$leaf.bak_mig_$suffix"
+        $backupPath = Join-Path $parent $backupName
+        Rename-Item -LiteralPath $SourcePath -NewName $backupName -ErrorAction Stop
 
         # Create symbolic link, fallback to junction if failed
+        # attempt creating link; fall back to junction
         try {
             Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
             New-Item -ItemType SymbolicLink -Path $SourcePath -Target $targetPath -ErrorAction Stop | Out-Null
             Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
         } catch {
             Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkFailed") [Colors]::Warning
-            New-Item -ItemType Junction -Path $SourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-            Write-ColoredOutput (Get-String -Key "Migration.JunctionCreated") [Colors]::Success
+            try {
+                New-Item -ItemType Junction -Path $SourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+                Write-ColoredOutput (Get-String -Key "Migration.JunctionCreated") [Colors]::Success
+            } catch {
+                throw
+            }
+        }
+
+        # Finalize: remove backup of the original folder
+        Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
+        try {
+            Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
+        } catch {
+            # Keep link and target; leave backup for manual cleanup
+            try { Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false } catch {}
         }
 
         return $true
     } catch {
+        # Rollback on any failure: restore original folder name and clean up newly created target
+        try {
+            if ($backupPath -and (Test-Path -LiteralPath $backupPath) -and -not (Test-Path -LiteralPath $SourcePath)) {
+                $leaf = Split-Path -Path $SourcePath -Leaf
+                Rename-Item -LiteralPath $backupPath -NewName $leaf -ErrorAction SilentlyContinue
+            }
+        } catch {}
+        try {
+            if ($targetCreated -and (Test-Path -LiteralPath $targetPath)) {
+                Remove-Item -LiteralPath $targetPath -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
+            }
+        } catch {}
         Write-ColoredOutput (Get-String -Key "Common.MigrationFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
         return $false
     }
@@ -1882,6 +1938,8 @@ function Restore-FolderFromLink {
         [string]$DisplayName,
         [switch]$SkipConfirmation
     )
+
+    Reset-ProgressUI
 
     try {
         if (-not (Test-IsDirectoryLink -Path $SourcePath)) {
@@ -1945,10 +2003,8 @@ function Restore-FolderFromLink {
         if ($targetExists) {
             Write-ColoredOutput (Get-String -Key "Restore.Step3Restore" -Arguments @($linkTarget, $dest)) [Colors]::Info
             $moveFrom = Join-Path $linkTarget '*'
-            $moved = $false
             try {
                 Move-Item -Path $moveFrom -Destination $dest -Force -ErrorAction Stop
-                $moved = $true
             } catch {
                 # Fallback to copy if move fails (e.g., cross-device constraints)
                 try {
@@ -1981,9 +2037,11 @@ function Restore-FolderFromLink {
 }
 
 
-#>
+ 
 function Invoke-DotFolderMigration {
     param([string]$DevDrivePath)
+
+    Reset-ProgressUI
 
     # 1) Scan and display
     Write-ColoredOutput (Get-String -Key "DotFolders.Scanning") [Colors]::Info
@@ -2008,19 +2066,33 @@ function Invoke-DotFolderMigration {
     if (-not $DryRun) {
         # Calculate size and show scanning progress
         $sizes = @()
-        for ($i=0; $i -lt $folders.Count; $i++) {
-            $dir = $folders[$i]
-            $pct = [int]((($i + 1) / $folders.Count) * 100)
-            # Write-Progress requires ASCII-compatible strings, use hardcoded English
-            Write-Progress -Activity "Scanning hidden folders..." -Status ("{0}/{1} {2}" -f ($i+1), $folders.Count, $dir.Name) -PercentComplete $pct
-            $sizes += (Get-FolderSizeBytes -Path $dir.FullName)
+        $progressId = $script:ProgressIds.ScanFolders
+        try {
+            for ($i=0; $i -lt $folders.Count; $i++) {
+                $dir = $folders[$i]
+                $pct = [int]((($i + 1) / $folders.Count) * 100)
+                # Write-Progress requires ASCII-compatible strings, use hardcoded English
+                Write-Progress -Id $progressId -Activity "Scanning hidden folders..." -Status ("{0}/{1} {2}" -f ($i+1), $folders.Count, $dir.Name) -PercentComplete $pct
+                # Skip size calculation for migrated folders to improve performance
+                if (Test-IsDirectoryLink -Path $dir.FullName) {
+                    $sizes += 0
+                } else {
+                    $sizes += (Get-FolderSizeBytes -Path $dir.FullName)
+                }
+            }
+        } finally {
+            Write-Progress -Id $progressId -Activity "Scanning hidden folders..." -Completed
         }
-        Write-Progress -Activity "Scanning hidden folders..." -Completed
 
-        # Filter out folders with 0 GB size
+        # Filter out folders with 0 GB size or migrated folders
         for ($i=0; $i -lt $folders.Count; $i++) {
-            if ([long]$sizes[$i] -gt 0) {
-                $nonEmpty += [PSCustomObject]@{ Dir = $folders[$i]; SizeBytes = [long]$sizes[$i] }
+            $isMigrated = Test-IsDirectoryLink -Path $folders[$i].FullName
+            if ([long]$sizes[$i] -gt 0 -or $isMigrated) {
+                $nonEmpty += [PSCustomObject]@{
+                    Dir = $folders[$i];
+                    SizeBytes = if ($isMigrated) { $null } else { [long]$sizes[$i] }
+                    IsMigrated = $isMigrated
+                }
             }
         }
 
@@ -2031,11 +2103,11 @@ function Invoke-DotFolderMigration {
 
         for ($j=0; $j -lt $nonEmpty.Count; $j++) {
             $dir = $nonEmpty[$j].Dir
-            $sizeGB = [math]::Round($nonEmpty[$j].SizeBytes/1GB,2)
+            $sizeGB = if ($nonEmpty[$j].IsMigrated) { "-" } else { [math]::Round($nonEmpty[$j].SizeBytes/1GB,2) }
             $idx = "{0,3}" -f ($j+1)
             $name = Format-FixedWidth -Text $dir.Name -Width 27 -Align Left
             $sizePad = "{0,8}" -f $sizeGB
-            $isMigrated = if (Test-IsDirectoryLink -Path $dir.FullName) { "Yes" } else { "No" }
+            $isMigrated = if ($nonEmpty[$j].IsMigrated) { "Yes" } else { "No" }
             $migratedPad = "{0,-8}" -f $isMigrated
             Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($idx, $name, $sizePad, $migratedPad, $dir.FullName)) [Colors]::Info
         }
@@ -2043,12 +2115,12 @@ function Invoke-DotFolderMigration {
         # Dry-run: don't calculate sizes, list all
         for ($i=0; $i -lt $folders.Count; $i++) {
             $dir = $folders[$i]
-            $nonEmpty += [PSCustomObject]@{ Dir = $dir; SizeBytes = $null }
+            $isMigrated = Test-IsDirectoryLink -Path $dir.FullName
+            $nonEmpty += [PSCustomObject]@{ Dir = $dir; SizeBytes = $null; IsMigrated = $isMigrated }
             $idx = "{0,3}" -f ($i+1)
             $name = Format-FixedWidth -Text $dir.Name -Width 27 -Align Left
             $sizePad = "{0,8}" -f '-'
-            $isMigrated = if (Test-IsDirectoryLink -Path $dir.FullName) { "Yes" } else { "No" }
-            $migratedPad = "{0,-8}" -f $isMigrated
+            $migratedPad = "{0,-8}" -f (if ($isMigrated) { "Yes" } else { "No" })
             Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($idx, $name, $sizePad, $migratedPad, $dir.FullName)) [Colors]::Info
         }
     }
@@ -2097,7 +2169,7 @@ function Invoke-DotFolderMigration {
         if (Test-IsDirectoryLink -Path $dir.FullName) { $toRestore += $dir } else { $toMigrate += $dir }
     }
 
-    $selCount = $selectedIndices.Count
+    # selected item count (unused variable removed)
     $totalText = "-"
     if (-not $DryRun -and $toMigrate.Count -gt 0) {
         $totalBytes = 0
@@ -2134,7 +2206,7 @@ function Invoke-DotFolderMigration {
         foreach ($d in $toMigrate) { Write-ColoredOutput (Get-String -Key "DotFolderOperations.FolderItem" -Arguments @($d.FullName)) [Colors]::Info }
         foreach ($d in $toMigrate) {
             Write-ColoredOutput (Get-String -Key "DotFolderOperations.Migrating" -Arguments @($d.FullName)) [Colors]::Menu
-            [void](Migrate-FolderWithLink -SourcePath $d.FullName -DevDrivePath $DevDrivePath)
+            [void](Move-FolderWithLink -SourcePath $d.FullName -DevDrivePath $DevDrivePath)
             Write-Host ""
         }
         return
@@ -2157,7 +2229,7 @@ function Invoke-DotFolderMigration {
         }
         foreach ($d in $toMigrate) {
             Write-ColoredOutput (Get-String -Key "DotFolderOperations.Migrating" -Arguments @($d.FullName)) [Colors]::Menu
-            [void](Migrate-FolderWithLink -SourcePath $d.FullName -DevDrivePath $DevDrivePath)
+            [void](Move-FolderWithLink -SourcePath $d.FullName -DevDrivePath $DevDrivePath)
             Write-Host ""
         }
         return
@@ -2175,6 +2247,7 @@ function Move-CacheToDevDrive {
         [hashtable]$Config,
         [string]$DevDrivePath
     )
+    Reset-ProgressUI
 
     $cacheName = $Config.Name
     $sourcePath = $Config.DefaultPath
@@ -2183,10 +2256,12 @@ function Move-CacheToDevDrive {
     Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.Configuring" -Arguments @($cacheName)) [Colors]::Info
 
     # Create target directory
+    $targetCreated = $false
     if (!(Test-Path $targetPath)) {
         if (-not $DryRun) {
             New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
         }
+        $targetCreated = $true
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.CreatingTarget" -Arguments @($targetPath)) [Colors]::Success
     }
 
@@ -2209,25 +2284,67 @@ function Move-CacheToDevDrive {
         $skipMove = $true
     }
 
-    # Move existing cache if it exists
+    # Move existing cache if it exists (transactional with rollback)
     if ((-not $skipMove) -and (Test-Path -LiteralPath $sourcePath)) {
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.PreparingMigration") [Colors]::Info
 
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.Starting") [Colors]::Info
+        $backupPath = $null
         try {
-            # For directories, move contents
-            if ((Get-Item $sourcePath) -is [System.IO.DirectoryInfo]) {
-                if (-not $DryRun) {
-                    Move-DirectoryContentsWithProgress -SourcePath $sourcePath -DestinationPath $targetPath
-                    Remove-Item -LiteralPath $sourcePath -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
+            if (-not $DryRun) {
+                # For directories, copy contents first to allow rollback
+                if ((Get-Item $sourcePath) -is [System.IO.DirectoryInfo]) {
+                    Copy-DirectoryWithProgress -SourcePath $sourcePath -DestinationPath $targetPath
+                } else {
+                    Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force -ErrorAction Stop
                 }
-            } else {
-                if (-not $DryRun) {
-                    Move-Item $sourcePath $targetPath -Force -ErrorAction Stop
+
+                # Rename source to backup, then create link; delete backup after link succeeds
+                $parent = Split-Path -Path $sourcePath -Parent
+                $leaf = Split-Path -Path $sourcePath -Leaf
+                $suffix = (Get-Date -Format 'yyyyMMddHHmmss')
+                $backupName = "$leaf.bak_mig_$suffix"
+                $backupPath = Join-Path $parent $backupName
+                Rename-Item -LiteralPath $sourcePath -NewName $backupName -ErrorAction Stop
+
+                try {
+                    Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
+                    New-Item -ItemType SymbolicLink -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+                    Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+                } catch {
+                    Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkFailed") [Colors]::Warning
+                    try {
+                        New-Item -ItemType Junction -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+                        Write-ColoredOutput (Get-String -Key "Migration.JunctionCreated") [Colors]::Success
+                    } catch {
+                        throw
+                    }
+                }
+
+                # After link is created, remove backup (original contents)
+                Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
+                try {
+                    Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
+                } catch {
+                    try { Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false } catch {}
                 }
             }
             Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.MigrationSuccess") [Colors]::Success
         } catch {
+            # Rollback: restore original folder name; clean up target if we created it
+            if (-not $DryRun) {
+                try {
+                    if ($backupPath -and (Test-Path -LiteralPath $backupPath) -and -not (Test-Path -LiteralPath $sourcePath)) {
+                        $leaf = Split-Path -Path $sourcePath -Leaf
+                        Rename-Item -LiteralPath $backupPath -NewName $leaf -ErrorAction SilentlyContinue
+                    }
+                } catch {}
+                try {
+                    if ($targetCreated -and (Test-Path -LiteralPath $targetPath)) {
+                        Remove-Item -LiteralPath $targetPath -Recurse -Force -ErrorAction SilentlyContinue -Confirm:$false
+                    }
+                } catch {}
+            }
             Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.MigrationFailed" -Arguments @($_.Exception.Message)) [Colors]::Warning
             return $false
         }
@@ -2406,5 +2523,3 @@ function Invoke-Main {
 
 # Run main function
 Invoke-Main
-
-

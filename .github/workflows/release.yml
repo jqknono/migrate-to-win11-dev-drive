@@ -136,7 +136,7 @@ jobs:
 
           ### Parameters
           - `-DevDrivePath "D:\"` - Specify Dev Drive path
-          - `-DebugMode` - Enable debug mode
+          - `-DryRun` - Enable debug mode
           - `-Lang "en"` - Set language (en/zh)
           - `-Version` - Show version info
 
