@@ -1,5 +1,7 @@
 # Dev Drive 缓存迁移脚本
 
+项目地址：[https://github.com/jqknono/migrate-to-win11-dev-drive](https://github.com/jqknono/migrate-to-win11-dev-drive)
+
 其它语言:
 | [English](README.en-us.md) | [简体中文](README.md) | [繁体中文](README.zh-tw.md) | [日本語](README.ja-jp.md) | [한국어](README.ko-kr.md) | [Français](README.fr-fr.md) | [Deutsch](README.de-de.md) | [Italiano](README.it-it.md) | [Español](README.es-es.md) | [Русский](README.ru-ru.md) | [Português (BR)](README.pt-br.md) | [Nederlands](README.nl-nl.md) | [Türkçe](README.tr-tr.md) | [العربية](README.ar-sa.md) | [हिंदी](README.hi-in.md) | [ไทย](README.th-th.md) |
 
@@ -54,7 +56,7 @@ Windows 11 引入了 Dev Drive，这是一种专为开发者优化的存储卷�
   - Chocolatey (Windows 包管理器)
   - 用户隐藏文件夹 (.xxx)
 - **恢复缓存**: 将已迁移到 Dev Drive 的缓存目录恢复到其原始位置。
-- **链接迁移**: 通过创建符号链接/联接点迁移缓存目录，不修改任何环境变量。
+- **链接迁移**: 通过创建目录链接/联接点迁移缓存目录，不修改任何环境变量。
 - **测试模式**: 提供安全的模拟操作，用于测试 Dev Drive 删除等功能，而不会实际修改系统。
 
 ## 使用说明
@@ -85,7 +87,7 @@ iex "& { $(irm https://raw.githubusercontent.com/jqknono/migrate-to-win11-dev-dr
 
 - **目的**: 此脚本的目的是迁移缓存文件夹，而不是清理它们。迁移后，原始缓存数据仍然存在，只是存储位置发生了变化。
 - **备份**: 在进行重大操作（如删除 Dev Drive）之前，建议备份重要数据。
-- **环境变量**: 脚本不会读取或写入用户环境变量；迁移通过符号链接完成。
+- **环境变量**: 脚本不会读取或写入用户环境变量；迁移通过目录链接完成。
 
 ## 参考资料
 
