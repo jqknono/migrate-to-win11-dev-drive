@@ -98,7 +98,7 @@ $script:CurrentLanguage = $Lang
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.5"
+$script:ScriptVersion = "v0.0.6"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -1366,6 +1366,12 @@ $CacheConfigs = [ordered]@{
         EnvVar = "GOPROXY"
         DefaultPath = "$env:USERPROFILE\go\pkg\mod"
         Description = "Go Modules Cache"
+    }
+    "programdatatemp" = @{
+        Name = "ProgramData Temp"
+        EnvVar = ""
+        DefaultPath = "C:\ProgramData\Temp"
+        Description = "Windows ProgramData Temporary Directory"
     }
     "temp" = @{
         Name = "Windows TEMP/TMP"
