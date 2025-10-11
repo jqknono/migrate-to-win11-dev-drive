@@ -9,7 +9,7 @@ Dev Drive Cache Migration Script
 
 .DESCRIPTION
     This script helps developers migrate their package caches to Dev Drive for improved performance.
-    It provides an interactive menu to select which caches to migrate and automatically sets up symbolic links
+    It provides an interactive menu to select which caches to migrate and automatically sets up directory junctions
     to redirect cache access to the Dev Drive location.
 
     System Requirements:
@@ -19,11 +19,11 @@ Dev Drive Cache Migration Script
     Important Notes:
     - This script's purpose is to MIGRATE cache folders, NOT clean them
     - All operations require user confirmation and will not execute automatically
-    - Migration process: Copy files to Dev Drive -> Delete source directory -> Create symbolic link
-    - Uses symbolic links only - does not modify environment variables
+    - Migration process: Copy files to Dev Drive -> Delete source directory -> Create directory junction
+    - Uses directory junctions only - does not modify environment variables
     - Supported cache types:
-        - Node.js (npm, yarn, pnpm)
-        - Python (pip)
+        - Node.js (npm, yarn, pnpm, global npm node_modules)
+        - Python (pip, uv)
         - .NET (NuGet)
         - Java (Maven, Gradle)
         - Go (Go modules)
@@ -42,7 +42,7 @@ Dev Drive Cache Migration Script
     - Restore functionality to return caches to original locations
     - Dry-run mode to preview actions without making changes
     - Comprehensive hidden folder scanning and migration
-    - Automatic symlink/junction creation with fallback support
+    - Automatic junction creation with rollback support
 
 .PARAMETER DevDrivePath
     Specifies the path to the Dev Drive. If not provided, the script will attempt to auto-detect it.
@@ -98,7 +98,7 @@ $script:CurrentLanguage = $Lang
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.4"
+$script:ScriptVersion = "v0.0.5"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -1108,35 +1108,42 @@ $script:Strings = @{
         OperationDetails = @{ zh = "   📂 文件夹迁移操作详情："; en = "   📂 Folder Migration Operation Details:" }
         SourcePath = @{ zh = "      源路径：{0}"; en = "      Source Path: {0}" }
         TargetPath = @{ zh = "      目标路径：{0}"; en = "      Target Path: {0}" }
-        OperationLabel = @{ zh = "      操作：1) 创建目标目录  2) 复制到 Dev Drive  3) 删除源目录  4) 创建符号链接"; en = "      Operation: 1) Create target directory  2) Copy files to Dev Drive  3) Delete source directory  4) Create symbolic link" }
+        OperationLabel = @{ zh = "      操作:1) 备份源目录  2) 从备份复制到 Dev Drive  3) 创建目录链接  4) 删除备份"; en = "      Operation: 1) Rename source to backup  2) Copy backup to Dev Drive  3) Create directory junction  4) Delete backup" }
         CacheType = @{ zh = "      缓存类型：{0}"; en = "      Cache Type: {0}" }
-        OperationLabelSimple = @{ zh = "      操作：1) 创建目标目录  2) 复制到 Dev Drive  3) 创建符号链接"; en = "      Operation: 1) Create target directory  2) Copy files to Dev Drive  3) Create symbolic link" }
+        OperationLabelSimple = @{ zh = "      操作:1) 备份源目录  2) 从备份复制到 Dev Drive  3) 创建目录链接"; en = "      Operation: 1) Rename source to backup  2) Copy backup to Dev Drive  3) Create directory junction" }
         ConfirmFolder = @{ zh = "   确认迁移文件夹 {0}？ (Y/N)"; en = "   Confirm migration of folder {0}? (Y/N)" }
         FolderCancelled = @{ zh = "   ❌ Migration of folder {0} cancelled"; en = "   ❌ Migration of folder {0} cancelled" }
-        CreatingSymbolicLink = @{ zh = "   Creating symbolic link: {0} -> {1}"; en = "   Creating symbolic link: {0} -> {1}" }
-        SymbolicLinkCreated = @{ zh = "   ✅ Directory symbolic link created"; en = "   ✅ Directory symbolic link created" }
-        SymbolicLinkFailed = @{ zh = "   Symbolic link failed, trying directory junction..."; en = "   Symbolic link failed, trying directory junction..." }
+        CreatingSymbolicLink = @{ zh = "   正在创建目录联接: {0} -> {1}"; en = "   Creating directory junction: {0} -> {1}" }
+        SymbolicLinkCreated = @{ zh = "   ✅ 已创建目录联接"; en = "   ✅ Directory junction created" }
+        SymbolicLinkFailed = @{ zh = "   创建目录联接失败，请检查权限或目标路径"; en = "   Directory junction creation failed; verify permissions or target path." }
         JunctionCreated = @{ zh = "   ✅ Directory junction created"; en = "   ✅ Directory junction created" }
         CopyCompleted = @{ zh = "   Copy completed"; en = "   Copy completed" }
-        DeletingSource = @{ zh = "   Deleting source directory: {0}"; en = "   Deleting source directory: {0}" }
+        DeletingSource = @{ zh = "   删除备份目录: {0}"; en = "   Deleting backup directory: {0}" }
         CreatingTargetDirectory = @{ zh = "   Creating target directory: {0}"; en = "   Creating target directory: {0}" }
         WarningFailedMoveCopy = @{ zh = "   Warning: Failed to move/copy contents; restored empty folder only."; en = "   Warning: Failed to move/copy contents; restored empty folder only." }
         CleaningUpCacheFolder = @{ zh = "   Cleaning up cache folder: {0}"; en = "   Cleaning up cache folder: {0}" }
         # Multi-line operation header
         OperationTitle = @{ zh = "      操作："; en = "      Operation:" }
-        OperationLine1 = @{ zh = "      1) 创建目标目录"; en = "      1) Create target directory" }
-        OperationLine2 = @{ zh = "      2) 复制到 Dev Drive"; en = "      2) Copy files to Dev Drive" }
-        OperationLine3 = @{ zh = "      3) 删除源目录"; en = "      3) Delete source directory" }
-        OperationLine4 = @{ zh = "      4) 创建符号链接"; en = "      4) Create symbolic link" }
+        OperationLine1 = @{ zh = "      1) 备份源目录（改名）"; en = "      1) Rename source directory as backup" }
+        OperationLine2 = @{ zh = "      2) 从备份复制到 Dev Drive"; en = "      2) Copy backup contents to Dev Drive" }
+        OperationLine3 = @{ zh = "      3) 创建目录链接"; en = "      3) Create directory junction" }
+        OperationLine4 = @{ zh = "      4) 删除备份目录"; en = "      4) Delete backup directory" }
         # Step plan and dry-run labels
         StepsHeader = @{ zh = "      步骤："; en = "      Steps:" }
-        Step1CreateTarget = @{ zh = "      第 1/4 步：创建目标目录：{0}"; en = "      Step 1/4: Create target directory: {0}" }
-        Step2Copy = @{ zh = "      第 2/4 步：复制到目标：{0} -> {1}"; en = "      Step 2/4: Copy to target: {0} -> {1}" }
-        Step3DeleteSource = @{ zh = "      第 3/4 步：删除源目录：{0}"; en = "      Step 3/4: Delete source directory: {0}" }
-        Step4CreateLink = @{ zh = "      第 4/4 步：创建符号链接：{0} -> {1}"; en = "      Step 4/4: Create symbolic link: {0} -> {1}" }
-        OperationNumbered = @{ zh = "      操作：1) 创建目标目录  2) 复制到 Dev Drive  3) 删除源目录  4) 创建符号链接"; en = "      Operation: 1) Create target directory  2) Copy files to Dev Drive  3) Delete source directory  4) Create symbolic link" }
+        Step1RenameBackup = @{ zh = "      第 1/4 步: 将源目录改名为备份:{0} -> {1}"; en = "      Step 1/4: Rename source to backup: {0} -> {1}" }
+        Step2CopyFromBackup = @{ zh = "      第 2/4 步: 从备份复制到目标:{0} -> {1}"; en = "      Step 2/4: Copy backup to target: {0} -> {1}" }
+        Step3CreateLink = @{ zh = "      第 3/4 步: 创建目录链接:{0} -> {1}"; en = "      Step 3/4: Create directory junction: {0} -> {1}" }
+        Step4DeleteBackup = @{ zh = "      第 4/4 步: 删除备份目录:{0}"; en = "      Step 4/4: Delete backup directory: {0}" }
+        OperationNumbered = @{ zh = "      操作:1) 备份源目录  2) 从备份复制到 Dev Drive  3) 创建目录链接  4) 删除备份"; en = "      Operation: 1) Rename source to backup  2) Copy backup to Dev Drive  3) Create directory junction  4) Delete backup" }
         DryRunNote = @{ zh = "      （演练模式）不会进行任何更改。"; en = "      (Dry-run) No changes will be made." }
-        StartingCopy = @{ zh = "   正在复制：{0} -> {1}"; en = "   Starting copy: {0} -> {1}" }
+        RenamingSource = @{ zh = "   正在将源目录改名为备份: {0} -> {1}"; en = "   Renaming source to backup: {0} -> {1}" }
+        RenameCompleted = @{ zh = "   已创建备份目录: {0}"; en = "   Backup directory created: {0}" }
+        RestoringBackup = @{ zh = "   迁移失败, 正在恢复目录: {0}"; en = "   Migration failed, restoring directory: {0}" }
+        RestoreCompleted = @{ zh = "   目录已恢复: {0}"; en = "   Directory restored: {0}" }
+        RestoreFailed = @{ zh = "   恢复目录失败:{0}"; en = "   Failed to restore directory: {0}" }
+        RemovingTemporaryLink = @{ zh = "   删除失败的目录链接: {0}"; en = "   Removing failed directory link: {0}" }
+        RemoveLinkFailed = @{ zh = "   删除目录链接失败:{0}"; en = "   Failed to remove directory link: {0}" }
+        StartingCopy = @{ zh = "   开始从备份复制:{0} -> {1}"; en = "   Starting copy from backup: {0} -> {1}" }
         # (restore-related labels moved under Restore)
     }
 
@@ -1154,11 +1161,26 @@ $script:Strings = @{
     }
 
     CacheMenuTable = @{
-        TableFormat = @{ zh = "{0,3}    {1}  {2,8}  {3,-8}  {4}"; en = "{0,3}    {1}  {2,8}  {3,-8}  {4}" }
+        TableFormat = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
         # Header/Detail/FolderList use placeholders; values are provided at call sites
-        Header = @{ zh = "{0,3}    {1}  {2,8}  {3,-8}  {4}"; en = "{0,3}    {1}  {2,8}  {3,-8}  {4}" }
-        Detail = @{ zh = "{0,3}    {1}  {2,8}  {3,-8}  {4}"; en = "{0,3}    {1}  {2,8}  {3,-8}  {4}" }
-        FolderList = @{ zh = "{0,3}    {1}  {2,8}  {3,-8}  {4}"; en = "{0,3}    {1}  {2,8}  {3,-8}  {4}" }
+        Header = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
+        Detail = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
+        FolderList = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
+    }
+
+    CacheMenuHeadings = @{
+        No = @{ zh = "序号"; en = "No." }
+        Name = @{ zh = "名称"; en = "Name" }
+        Size = @{ zh = "大小(GB)"; en = "Size(GB)" }
+        Status = @{ zh = "状态"; en = "Status" }
+        Migrated = @{ zh = "已迁移"; en = "Migrated" }
+        Path = @{ zh = "路径"; en = "Path" }
+    }
+
+    CacheMenuStatus = @{
+        Missing = @{ zh = "缺失"; en = "Missing" }
+        Exists = @{ zh = "存在"; en = "Exists" }
+        Linked = @{ zh = "已联接"; en = "Linked" }
     }
 
     DotFolderOperations = @{
@@ -1238,7 +1260,7 @@ $script:Strings = @{
     }
 }
 
-# Symlink-only mode: do not modify environment variables
+# Junction-only mode: do not modify environment variables
 $script:DisableEnvVarChanges = $true
 
 # Get string function for specified language
@@ -1330,8 +1352,14 @@ $CacheConfigs = [ordered]@{
     "pip" = @{
         Name = "Python pip Cache"
         EnvVar = "PIP_CACHE_DIR"
-        DefaultPath = "$env:APPDATA\pip\Cache"
+        DefaultPath = "$env:LOCALAPPDATA\pip\Cache"
         Description = "Python pip Package Cache"
+    }
+    "uvcache" = @{
+        Name = "uv Cache"
+        EnvVar = ""
+        DefaultPath = "$env:LOCALAPPDATA\uv\cache"
+        Description = "uv package manager cache"
     }
     "go" = @{
         Name = "Go Modules Cache"
@@ -1363,6 +1391,18 @@ $CacheConfigs = [ordered]@{
         EnvVar = ""
         DefaultPath = "$env:ChocolateyInstall\lib"
         Description = "Chocolatey Package Manager Cache"
+    }
+    "npmglobalmodules" = @{
+        Name = "npm Global Node Modules"
+        EnvVar = ""
+        DefaultPath = "$env:APPDATA\npm\node_modules"
+        Description = "Global npm node_modules directory"
+    }
+    "npmcachelocal" = @{
+        Name = "npm Local Cache"
+        EnvVar = ""
+        DefaultPath = "$env:LOCALAPPDATA\npm-cache"
+        Description = "npm cache in LocalAppData"
     }
 }
 
@@ -1402,7 +1442,7 @@ function Write-ColoredOutput {
     }
 }
 
-# 检查目录路径是否为链接（符号链接或联接点）
+# 检查目录路径是否为链接（符号链接或目录联接）
 # Check if a directory path is a link (symbolic link or junction)
 function Test-IsDirectoryLink {
     param(
@@ -1606,8 +1646,21 @@ function Show-CacheMenuEx {
 
     Write-ColoredOutput (Get-String -Key "CacheMenu.ExtraTitle") [Colors]::Menu
     Write-Host ""
-    $header = ("{0,2}    {1,-20}  {2,-50}  {3,-12}  {4,-8}" -f 'No', 'Cache Type', 'Current Path', 'Exists/Status', 'Migrated')
-    Write-ColoredOutput $header [Colors]::Header
+    $idxH = Get-String -Key "CacheMenuHeadings.No"
+    $nameH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Name") -Width 27 -Align Left
+    $sizeH = Get-String -Key "CacheMenuHeadings.Size"
+    $statusH = Get-String -Key "CacheMenuHeadings.Status"
+    $migrH = Get-String -Key "CacheMenuHeadings.Migrated"
+    $pathH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Path") -Width 60 -Align Left
+    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Header" -Arguments @($idxH, $nameH, $sizeH, $statusH, $migrH, $pathH)) [Colors]::Header
+    $dash = '-'
+    $idxD = $dash * 3
+    $nameD = $dash * 27
+    $sizeD = $dash * 8
+    $statusD = $dash * 10
+    $migrD = $dash * 8
+    $pathD = $dash * 60
+    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Detail" -Arguments @($idxD, $nameD, $sizeD, $statusD, $migrD, $pathD)) [Colors]::Header
 
     # Create a sorted list of keys based on cache name for consistent menu ordering
     $sortedKeys = $Configs.Keys | Sort-Object { $Configs[$_].Name }
@@ -1618,14 +1671,34 @@ function Show-CacheMenuEx {
         $exists = Test-Path -LiteralPath $config.DefaultPath
         $isLinked = $false
         if ($exists) { $isLinked = Test-IsDirectoryLink -Path $config.DefaultPath }
-        # Symlink-only mode: treat as migrated only when directory link is detected
-        $status = if (-not $exists) { 'Missing' } else { 'Exists' }
+        # Junction-only mode: treat as migrated only when directory link is detected
+        $statusKey = if (-not $exists) { 'CacheMenuStatus.Missing' } elseif ($isLinked) { 'CacheMenuStatus.Linked' } else { 'CacheMenuStatus.Exists' }
+        $statusText = Get-String -Key $statusKey
         # compute display fields
         $isMigrated = $isLinked
         $migratedText = $isMigrated ? 'Yes' : 'No'
-        $nameDisp = Format-FixedWidth -Text $config.Name -Width 20 -Align Left
-        $pathDisp = Format-FixedWidth -Text $config.DefaultPath -Width 50 -Align Left
-        Write-ColoredOutput (Get-String -Key "CacheMenuTable.TableFormat" -Arguments @($index, $nameDisp, $pathDisp, $status, $migratedText)) [Colors]::Info
+        $nameDisp = Format-FixedWidth -Text $config.Name -Width 27 -Align Left
+        $pathRaw = if ($exists) {
+            $config.DefaultPath
+        } else {
+            $missingTag = Get-String -Key "CacheMenuStatus.Missing"
+            "[{0}] {1}" -f $missingTag, $config.DefaultPath
+        }
+        $pathDisp = Format-FixedWidth -Text $pathRaw -Width 60 -Align Left
+        $sizeValue = '-'
+        if (-not $DryRun -and $exists -and -not $isLinked) {
+            $sizeBytes = Get-FolderSizeBytes -Path $config.DefaultPath
+            if ($sizeBytes -gt 0) {
+                $sizeGB = [math]::Round($sizeBytes / 1GB, 2)
+                $sizeValue = "{0:N2}" -f $sizeGB
+            } elseif ($null -ne $sizeBytes) {
+                $sizeValue = "0.00"
+            }
+        } else {
+            if ($DryRun) { $sizeValue = '-' }
+            elseif ($isLinked) { $sizeValue = '-' }
+        }
+        Write-ColoredOutput (Get-String -Key "CacheMenuTable.TableFormat" -Arguments @($index, $nameDisp, $sizeValue, $statusText, $migratedText, $pathDisp)) [Colors]::Info
     }
 
   
@@ -1799,6 +1872,33 @@ function Move-DirectoryContentsWithProgress {
     Write-Progress -Id $progressId -Activity "Moving files..." -Completed
 }
 
+function New-MigrationBackupPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath
+    )
+
+    $parent = Split-Path -Path $SourcePath -Parent
+    $leaf = Split-Path -Path $SourcePath -Leaf
+    if ([string]::IsNullOrWhiteSpace($leaf) -or [string]::IsNullOrWhiteSpace($parent)) {
+        throw "Unable to determine parent or name for source path: $SourcePath"
+    }
+
+    $timestamp = Get-Date -Format 'yyyyMMddHHmmss'
+    $backupName = "$leaf.bak_mig_$timestamp"
+    $candidate = Join-Path $parent $backupName
+    $counter = 1
+    while (Test-Path -LiteralPath $candidate) {
+        $backupName = "{0}.bak_mig_{1}_{2}" -f $leaf, $timestamp, $counter
+        $candidate = Join-Path $parent $backupName
+        $counter++
+    }
+
+    return [pscustomobject]@{
+        Name = $backupName
+        Path = $candidate
+    }
+}
+
 function Move-FolderWithLink {
     param(
         [string]$SourcePath,
@@ -1836,6 +1936,10 @@ function Move-FolderWithLink {
         }
     }
 
+    $backupInfo = New-MigrationBackupPath -SourcePath $SourcePath
+    $backupPath = $backupInfo.Path
+    $backupName = $backupInfo.Name
+
     # Show migration operation details
     Write-ColoredOutput (Get-String -Key "Migration.OperationDetails") [Colors]::Warning
     Write-ColoredOutput (Get-String -Key "Migration.SourcePath" -Arguments @($SourcePath)) [Colors]::Info
@@ -1861,48 +1965,73 @@ function Move-FolderWithLink {
         # Dry-run note first
         Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning
         Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step1CreateTarget" -Arguments @($targetPath)) [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step2Copy" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step3DeleteSource" -Arguments @($SourcePath)) [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step4CreateLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step1RenameBackup" -Arguments @($SourcePath, $backupPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step2CopyFromBackup" -Arguments @($backupPath, $targetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step3CreateLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step4DeleteBackup" -Arguments @($backupPath)) [Colors]::Info
         return $true
     }
 
-    $targetCreated = $false
-    $backupPath = $null
-
-    if (-not (Test-Path -LiteralPath $targetPath)) {
-        $parentDir = Split-Path -Path $targetPath -Parent
-        if ($parentDir -and -not (Test-Path -LiteralPath $parentDir)) {
-            New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
-        }
-        New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-        $targetCreated = $true
-        Write-ColoredOutput (Get-String -Key "Migration.CreatingTargetDirectory" -Arguments @($targetPath)) [Colors]::Success
-    }
-
-    Write-ColoredOutput (Get-String -Key "Migration.StartingCopy" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
-    Copy-DirectoryWithProgress -SourcePath $SourcePath -DestinationPath $targetPath
-    Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
-
-    # Backup original folder name for rollback
-    $parent = Split-Path -Path $SourcePath -Parent
     $leaf = Split-Path -Path $SourcePath -Leaf
-    $suffix = (Get-Date -Format 'yyyyMMddHHmmss')
-    $backupName = "$leaf.bak_mig_$suffix"
-    $backupPath = Join-Path $parent $backupName
-    Rename-Item -LiteralPath $SourcePath -NewName $backupName -ErrorAction Stop
+    $renameComplete = $false
+    $linkCreated = $false
 
-    # Try symbolic link first; if fails, explicitly error to stop, user can rerun with admin/Developer Mode
-    Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
-    New-Item -ItemType SymbolicLink -Path $SourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-    Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+    try {
+        Write-ColoredOutput (Get-String -Key "Migration.RenamingSource" -Arguments @($SourcePath, $backupPath)) [Colors]::Info
+        Rename-Item -LiteralPath $SourcePath -NewName $backupName -ErrorAction Stop
+        $renameComplete = $true
+        Write-ColoredOutput (Get-String -Key "Migration.RenameCompleted" -Arguments @($backupPath)) [Colors]::Success
 
-    # Finalize: remove backup of the original folder
-    Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
-    Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
+        if (-not (Test-Path -LiteralPath $targetPath)) {
+            $parentDir = Split-Path -Path $targetPath -Parent
+            if ($parentDir -and -not (Test-Path -LiteralPath $parentDir)) {
+                New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+            }
+            New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+            Write-ColoredOutput (Get-String -Key "Migration.CreatingTargetDirectory" -Arguments @($targetPath)) [Colors]::Success
+        }
 
-    return $true
+        Write-ColoredOutput (Get-String -Key "Migration.StartingCopy" -Arguments @($backupPath, $targetPath)) [Colors]::Info
+        Copy-DirectoryWithProgress -SourcePath $backupPath -DestinationPath $targetPath
+        Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
+
+        Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
+        New-Item -ItemType Junction -Path $SourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+        $linkCreated = $true
+        Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+
+        Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
+        Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
+
+        return $true
+    } catch {
+        $err = $_
+        Write-ColoredOutput (Get-String -Key "Migration.MigrationFailed" -Arguments @($err.Exception.Message)) [Colors]::Error
+
+        if ($linkCreated -and (Test-IsDirectoryLink -Path $SourcePath)) {
+            Write-ColoredOutput (Get-String -Key "Migration.RemovingTemporaryLink" -Arguments @($SourcePath)) [Colors]::Warning
+            try {
+                $null = & cmd /c rmdir "$SourcePath"
+                if ($LASTEXITCODE -ne 0) {
+                    Remove-Item -LiteralPath $SourcePath -Force -ErrorAction Stop -Confirm:$false
+                }
+            } catch {
+                Write-ColoredOutput (Get-String -Key "Migration.RemoveLinkFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
+            }
+        }
+
+        if ($renameComplete -and (Test-Path -LiteralPath $backupPath)) {
+            Write-ColoredOutput (Get-String -Key "Migration.RestoringBackup" -Arguments @($SourcePath)) [Colors]::Warning
+            try {
+                Rename-Item -LiteralPath $backupPath -NewName $leaf -ErrorAction Stop
+                Write-ColoredOutput (Get-String -Key "Migration.RestoreCompleted" -Arguments @($SourcePath)) [Colors]::Success
+            } catch {
+                Write-ColoredOutput (Get-String -Key "Migration.RestoreFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
+            }
+        }
+
+        return $false
+    }
 }
 
 function Restore-FolderFromLink {
@@ -2001,33 +2130,34 @@ function Invoke-DotFolderMigration {
         return
     }
 
-    # Aligned header for: No. (3) + 4sp, Name (27), Size(GB) (8), Migrated (8), Path
-    $idxH = ("{0,3}" -f 'No.')
-    $nameH = Format-FixedWidth -Text 'Name' -Width 27 -Align Left
-    $sizeH = ("{0,8}" -f 'Size(GB)')
-    $migrH = ("{0,-8}" -f 'Migrated')
-    $pathH = Format-FixedWidth -Text 'Path' -Width 60 -Align Left
-    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Header" -Arguments @($idxH, $nameH, $sizeH, $migrH, $pathH)) [Colors]::Header
-    $dash = '─'
-    $idxD = $dash * 3; $nameD = $dash * 27; $sizeD = $dash * 8; $migrD = $dash * 8; $pathD = $dash * 60
-    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Detail" -Arguments @($idxD, $nameD, $sizeD, $migrD, $pathD)) [Colors]::Header
+    # Aligned header for: No. (3) + 4sp, Name (27), Size(GB) (8), Status (10), Migrated (8), Path (60)
+    $idxH = Get-String -Key "CacheMenuHeadings.No"
+    $nameH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Name") -Width 27 -Align Left
+    $sizeH = Get-String -Key "CacheMenuHeadings.Size"
+    $statusH = Get-String -Key "CacheMenuHeadings.Status"
+    $migrH = Get-String -Key "CacheMenuHeadings.Migrated"
+    $pathH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Path") -Width 60 -Align Left
+    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Header" -Arguments @($idxH, $nameH, $sizeH, $statusH, $migrH, $pathH)) [Colors]::Header
+    $dash = '-'
+    $idxD = $dash * 3; $nameD = $dash * 27; $sizeD = $dash * 8; $statusD = $dash * 10; $migrD = $dash * 8; $pathD = $dash * 60
+    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Detail" -Arguments @($idxD, $nameD, $sizeD, $statusD, $migrD, $pathD)) [Colors]::Header
 
     $nonEmpty = @()
     if (-not $DryRun) {
         # Calculate size and show scanning progress
         $sizes = @()
         $progressId = $script:ProgressIds.ScanFolders
-    for ($i=0; $i -lt $folders.Count; $i++) {
-        $dir = $folders[$i]
-        $pct = [int]((($i + 1) / $folders.Count) * 100)
-        Write-Progress -Id $progressId -Activity "Scanning hidden folders..." -Status ("{0}/{1} {2}" -f ($i+1), $folders.Count, $dir.Name) -PercentComplete $pct
-        if (Test-IsDirectoryLink -Path $dir.FullName) {
-            $sizes += 0
-        } else {
-            $sizes += (Get-FolderSizeBytes -Path $dir.FullName)
+        for ($i=0; $i -lt $folders.Count; $i++) {
+            $dir = $folders[$i]
+            $pct = [int]((($i + 1) / $folders.Count) * 100)
+            Write-Progress -Id $progressId -Activity "Scanning hidden folders..." -Status ("{0}/{1} {2}" -f ($i+1), $folders.Count, $dir.Name) -PercentComplete $pct
+            if (Test-IsDirectoryLink -Path $dir.FullName) {
+                $sizes += 0
+            } else {
+                $sizes += (Get-FolderSizeBytes -Path $dir.FullName)
+            }
         }
-    }
-    Write-Progress -Id $progressId -Activity "Scanning hidden folders..." -Completed
+        Write-Progress -Id $progressId -Activity "Scanning hidden folders..." -Completed
 
         # Filter out folders with 0 GB size or migrated folders
         for ($i=0; $i -lt $folders.Count; $i++) {
@@ -2048,13 +2178,20 @@ function Invoke-DotFolderMigration {
 
         for ($j=0; $j -lt $nonEmpty.Count; $j++) {
             $dir = $nonEmpty[$j].Dir
-            $sizeGB = if ($nonEmpty[$j].IsMigrated) { "-" } else { [math]::Round($nonEmpty[$j].SizeBytes/1GB,2) }
-            $idx = "{0,3}" -f ($j+1)
+            $indexVal = $j + 1
             $name = Format-FixedWidth -Text $dir.Name -Width 27 -Align Left
-            $sizePad = "{0,8}" -f $sizeGB
-            $isMigrated = if ($nonEmpty[$j].IsMigrated) { "Yes" } else { "No" }
-            $migratedPad = "{0,-8}" -f $isMigrated
-            Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($idx, $name, $sizePad, $migratedPad, $dir.FullName)) [Colors]::Info
+            if ($nonEmpty[$j].IsMigrated) {
+                $sizeText = "-"
+                $statusText = Get-String -Key "CacheMenuStatus.Linked"
+                $migratedText = "Yes"
+            } else {
+                $sizeBytes = [long]$nonEmpty[$j].SizeBytes
+                $sizeText = if ($sizeBytes -gt 0) { "{0:N2}" -f ([math]::Round($sizeBytes/1GB, 2)) } else { "0.00" }
+                $statusText = Get-String -Key "CacheMenuStatus.Exists"
+                $migratedText = "No"
+            }
+            $pathText = Format-FixedWidth -Text $dir.FullName -Width 60 -Align Left
+            Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($indexVal, $name, $sizeText, $statusText, $migratedText, $pathText)) [Colors]::Info
         }
     } else {
         # Dry-run: don't calculate sizes, list all
@@ -2062,11 +2199,13 @@ function Invoke-DotFolderMigration {
             $dir = $folders[$i]
             $isMigrated = Test-IsDirectoryLink -Path $dir.FullName
             $nonEmpty += [PSCustomObject]@{ Dir = $dir; SizeBytes = $null; IsMigrated = $isMigrated }
-            $idx = "{0,3}" -f ($i+1)
+            $indexVal = $i + 1
             $name = Format-FixedWidth -Text $dir.Name -Width 27 -Align Left
-            $sizePad = "{0,8}" -f '-'
-            $migratedPad = "{0,-8}" -f (if ($isMigrated) { "Yes" } else { "No" })
-            Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($idx, $name, $sizePad, $migratedPad, $dir.FullName)) [Colors]::Info
+            $sizeText = "-"
+            $statusText = if ($isMigrated) { Get-String -Key "CacheMenuStatus.Linked" } else { Get-String -Key "CacheMenuStatus.Exists" }
+            $migratedText = if ($isMigrated) { "Yes" } else { "No" }
+            $pathText = Format-FixedWidth -Text $dir.FullName -Width 60 -Align Left
+            Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($indexVal, $name, $sizeText, $statusText, $migratedText, $pathText)) [Colors]::Info
         }
     }
 
@@ -2208,7 +2347,7 @@ function Move-CacheToDevDrive {
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.CreatingTarget" -Arguments @($targetPath)) [Colors]::Success
     }
 
-    # If the source is already a link (symlink/junction), mark as migrated and skip moving
+    # If the source is already a directory link (junction or symbolic link), mark as migrated and skip moving
     $skipMove = $false
     if ((Test-Path -LiteralPath $sourcePath) -and (Test-IsDirectoryLink -Path $sourcePath)) {
         $it = Get-Item -LiteralPath $sourcePath -Force -ErrorAction SilentlyContinue
@@ -2230,35 +2369,88 @@ function Move-CacheToDevDrive {
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.PreparingMigration") [Colors]::Info
 
         Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.Starting") [Colors]::Info
-        $backupPath = $null
-        if (-not $DryRun) {
-                # For directories, copy contents first to allow rollback
-            if ((Get-Item $sourcePath) -is [System.IO.DirectoryInfo]) {
-                Copy-DirectoryWithProgress -SourcePath $sourcePath -DestinationPath $targetPath
-            } else {
-                Copy-Item -LiteralPath $sourcePath -Destination $targetPath -Force -ErrorAction Stop
+        $backupInfo = New-MigrationBackupPath -SourcePath $sourcePath
+        $backupPath = $backupInfo.Path
+        $backupName = $backupInfo.Name
+        $migrationSucceeded = $false
+
+        if ($DryRun) {
+            Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning
+            Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
+            Write-ColoredOutput (Get-String -Key "Migration.Step1RenameBackup" -Arguments @($sourcePath, $backupPath)) [Colors]::Info
+            Write-ColoredOutput (Get-String -Key "Migration.Step2CopyFromBackup" -Arguments @($backupPath, $targetPath)) [Colors]::Info
+            Write-ColoredOutput (Get-String -Key "Migration.Step3CreateLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
+            Write-ColoredOutput (Get-String -Key "Migration.Step4DeleteBackup" -Arguments @($backupPath)) [Colors]::Info
+            $migrationSucceeded = $true
+        } else {
+            $renameComplete = $false
+            $linkCreated = $false
+            try {
+                Write-ColoredOutput (Get-String -Key "Migration.RenamingSource" -Arguments @($sourcePath, $backupPath)) [Colors]::Info
+                Rename-Item -LiteralPath $sourcePath -NewName $backupName -ErrorAction Stop
+                $renameComplete = $true
+                Write-ColoredOutput (Get-String -Key "Migration.RenameCompleted" -Arguments @($backupPath)) [Colors]::Success
+
+                if (-not (Test-Path -LiteralPath $targetPath)) {
+                    New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
+                    Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.CreatingTarget" -Arguments @($targetPath)) [Colors]::Success
+                }
+
+                Write-ColoredOutput (Get-String -Key "Migration.StartingCopy" -Arguments @($backupPath, $targetPath)) [Colors]::Info
+                $backupItem = Get-Item -LiteralPath $backupPath -Force
+                if ($backupItem -and $backupItem.PSIsContainer) {
+                    Copy-DirectoryWithProgress -SourcePath $backupPath -DestinationPath $targetPath
+                } else {
+                    Copy-Item -LiteralPath $backupPath -Destination $targetPath -Force -ErrorAction Stop
+                }
+                Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
+
+                Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
+                New-Item -ItemType Junction -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+                $linkCreated = $true
+                Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+
+                Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
+                Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
+
+                $migrationSucceeded = $true
+            } catch {
+                $err = $_
+                Write-ColoredOutput (Get-String -Key "Migration.MigrationFailed" -Arguments @($err.Exception.Message)) [Colors]::Error
+
+                if ($linkCreated -and (Test-IsDirectoryLink -Path $sourcePath)) {
+                    Write-ColoredOutput (Get-String -Key "Migration.RemovingTemporaryLink" -Arguments @($sourcePath)) [Colors]::Warning
+                    try {
+                        $null = & cmd /c rmdir "$sourcePath"
+                        if ($LASTEXITCODE -ne 0) {
+                            Remove-Item -LiteralPath $sourcePath -Force -ErrorAction Stop -Confirm:$false
+                        }
+                    } catch {
+                        Write-ColoredOutput (Get-String -Key "Migration.RemoveLinkFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
+                    }
+                }
+
+                if ($renameComplete -and (Test-Path -LiteralPath $backupPath)) {
+                    Write-ColoredOutput (Get-String -Key "Migration.RestoringBackup" -Arguments @($sourcePath)) [Colors]::Warning
+                    try {
+                        $originalName = Split-Path -Path $sourcePath -Leaf
+                        Rename-Item -LiteralPath $backupPath -NewName $originalName -ErrorAction Stop
+                        Write-ColoredOutput (Get-String -Key "Migration.RestoreCompleted" -Arguments @($sourcePath)) [Colors]::Success
+                    } catch {
+                        Write-ColoredOutput (Get-String -Key "Migration.RestoreFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
+                    }
+                }
+
+                return $false
             }
-
-                # Rename source to backup, then create link; delete backup after link succeeds
-            $parent = Split-Path -Path $sourcePath -Parent
-            $leaf = Split-Path -Path $sourcePath -Leaf
-            $suffix = (Get-Date -Format 'yyyyMMddHHmmss')
-            $backupName = "$leaf.bak_mig_$suffix"
-            $backupPath = Join-Path $parent $backupName
-            Rename-Item -LiteralPath $sourcePath -NewName $backupName -ErrorAction Stop
-
-            Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
-            New-Item -ItemType SymbolicLink -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-            Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
-
-                # After link is created, remove backup (original contents)
-            Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
-            Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
         }
-        Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.MigrationSuccess") [Colors]::Success
+
+        if ($migrationSucceeded) {
+            Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.MigrationSuccess") [Colors]::Success
+        }
     }
 
-    # Ensure source path is a link pointing to the target (symlink-first, fallback to junction)
+    # Ensure source path points to the target through a directory link
     if (-not (Test-IsDirectoryLink -Path $sourcePath)) {
         if (Test-Path -LiteralPath $sourcePath) {
             if (-not $DryRun) {
@@ -2267,20 +2459,20 @@ function Move-CacheToDevDrive {
         }
         Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
         if (-not $DryRun) {
-            New-Item -ItemType SymbolicLink -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
+            New-Item -ItemType Junction -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
             Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
         } else {
             Write-ColoredOutput "      (Dry-run) Skipping link creation" [Colors]::Warning
         }
     }
 
-    # Symlink-only: skip environment variable backup
+    # Junction-only: skip environment variable backup
 
-    # Symlink-only: do not modify any environment variables
+    # Junction-only: do not modify any environment variables
 
-    # Symlink-only: environment backup not applicable
+    # Junction-only: environment backup not applicable
 
-    # Symlink-only mode: no special cache handling or environment variable changes
+    # Junction-only mode: no special cache handling or environment variable changes
 }
 
 
@@ -2361,7 +2553,7 @@ function Invoke-Main {
                     $selectedKey = $keys[$index]
                     $cfg = $CacheConfigs[$selectedKey]
                     $srcPath = $cfg.DefaultPath
-                    # Symlink-only mode: do not inspect environment variables
+                    # Junction-only mode: do not inspect environment variables
                     if (Test-IsDirectoryLink -Path $srcPath) {
                         $reply = Read-Host (Get-String -Key "Restore.ConfirmStart" -Arguments @($cfg.Name))
                         if ($reply.Trim().ToUpper() -eq 'Y') {
@@ -2370,7 +2562,7 @@ function Invoke-Main {
                             Write-ColoredOutput (Get-String -Key "DotFolderOperations.SkippedRestore") [Colors]::Info
                         }
                     } else {
-                        # Symlink-only mode: proceed to migration details
+                        # Junction-only mode: proceed to migration details
                         # Display migration operation details before proceeding
                         $targetPath = if ($selectedKey -eq 'temp') { (Join-Path $DevDrivePath 'Temp') } else { (Join-Path $DevDrivePath ("Cache/" + $selectedKey)) }
 
@@ -2384,13 +2576,15 @@ function Invoke-Main {
                         Write-ColoredOutput (Get-String -Key "Migration.OperationLine2") [Colors]::Info
                         Write-ColoredOutput (Get-String -Key "Migration.OperationLine3") [Colors]::Info
                         Write-ColoredOutput (Get-String -Key "Migration.OperationLine4") [Colors]::Info
+                        $backupPreview = New-MigrationBackupPath -SourcePath $cfg.DefaultPath
+                        $previewBackupPath = $backupPreview.Path
                         # Refined step plan
                         if ($DryRun) { Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning }
                         Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
-                        Write-ColoredOutput (Get-String -Key "Migration.Step1CreateTarget" -Arguments @($targetPath)) [Colors]::Info
-                        Write-ColoredOutput (Get-String -Key "Migration.Step2Copy" -Arguments @($cfg.DefaultPath, $targetPath)) [Colors]::Info
-                        Write-ColoredOutput (Get-String -Key "Migration.Step3DeleteSource" -Arguments @($cfg.DefaultPath)) [Colors]::Info
-                        Write-ColoredOutput (Get-String -Key "Migration.Step4CreateLink" -Arguments @($cfg.DefaultPath, $targetPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step1RenameBackup" -Arguments @($cfg.DefaultPath, $previewBackupPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step2CopyFromBackup" -Arguments @($previewBackupPath, $targetPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step3CreateLink" -Arguments @($cfg.DefaultPath, $targetPath)) [Colors]::Info
+                        Write-ColoredOutput (Get-String -Key "Migration.Step4DeleteBackup" -Arguments @($previewBackupPath)) [Colors]::Info
 
                         # Secondary confirmation
                         $confirm = Read-Host (Get-String -Key "Migration.ConfirmFolder" -Arguments @($cfg.Name))
