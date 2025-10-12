@@ -98,7 +98,7 @@ $script:CurrentLanguage = $Lang
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.6"
+$script:ScriptVersion = "v0.0.7"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -1401,8 +1401,8 @@ $CacheConfigs = [ordered]@{
     "npmglobalmodules" = @{
         Name = "npm Global Node Modules"
         EnvVar = ""
-        DefaultPath = "$env:APPDATA\npm\node_modules"
-        Description = "Global npm node_modules directory"
+        DefaultPath = "$env:APPDATA\npm"
+        Description = "Global npm directory"
     }
     "npmcachelocal" = @{
         Name = "npm Local Cache"
