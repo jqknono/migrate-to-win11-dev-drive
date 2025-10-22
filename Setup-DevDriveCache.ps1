@@ -1361,6 +1361,12 @@ $CacheConfigs = [ordered]@{
         DefaultPath = "$env:LOCALAPPDATA\uv\cache"
         Description = "uv package manager cache"
     }
+    "nuget" = @{
+        Name = ".NET NuGet Packages"
+        EnvVar = "NUGET_PACKAGES"
+        DefaultPath = "$env:USERPROFILE\.nuget\packages"
+        Description = "NuGet Global Packages Cache"
+    }
     "go" = @{
         Name = "Go Modules Cache"
         EnvVar = "GOPROXY"
