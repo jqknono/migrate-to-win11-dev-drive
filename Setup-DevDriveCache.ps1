@@ -98,7 +98,7 @@ $script:CurrentLanguage = $Lang
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.7"
+$script:ScriptVersion = "v0.0.8"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -1454,6 +1454,27 @@ function Write-ColoredOutput {
     }
 }
 
+# 等待任意键，无需按回车；若 RawUI 不可用则回退到 Read-Host
+function Wait-ForAnyKey {
+    param(
+        [string]$Prompt = $null
+    )
+
+    if ($Prompt) {
+        Write-ColoredOutput $Prompt [Colors]::Info
+    }
+
+    if ($Host -and $Host.UI -and $Host.UI.RawUI) {
+        # 清空可能残留的键盘缓冲，避免立即返回
+        while ([System.Console]::KeyAvailable) { [void][System.Console]::ReadKey($true) }
+        $null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        return
+    }
+
+    # 回退：需要按回车
+    [void](Read-Host)
+}
+
 # 检查目录路径是否为链接（符号链接或目录联接）
 # Check if a directory path is a link (symbolic link or junction)
 function Test-IsDirectoryLink {
@@ -2546,8 +2567,8 @@ function Invoke-Main {
                 return
             }
             default {
-                if ($choice -match '^[dD]$') { Invoke-DotFolderMigration -DevDrivePath $devDrivePath; Read-Host "$(Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu')" | Out-Null; continue }
-                if ($choice -match '^[mM]$') { Invoke-DotFolderMigration -DevDrivePath $devDrivePath; Read-Host "$(Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu')" | Out-Null; continue }
+                if ($choice -match '^[dD]$') { Invoke-DotFolderMigration -DevDrivePath $devDrivePath; Wait-ForAnyKey -Prompt (Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu'); continue }
+                if ($choice -match '^[mM]$') { Invoke-DotFolderMigration -DevDrivePath $devDrivePath; Wait-ForAnyKey -Prompt (Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu'); continue }
 
                 # Parse numeric selection separately to avoid masking runtime errors as input errors
                 $sel = $null
@@ -2607,8 +2628,7 @@ function Invoke-Main {
                             if (-not $DryRun) { $configuredCaches += $cfg }
                         }
 
-                        Write-ColoredOutput (Get-String -Key "Common.PressAnyKeyContinue") [Colors]::Info
-                        Read-Host | Out-Null
+                        Wait-ForAnyKey -Prompt (Get-String -Key "Common.PressAnyKeyContinue")
                     }
                 }
             }
