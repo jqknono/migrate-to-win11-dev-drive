@@ -53,6 +53,9 @@ Dev Drive Cache Migration Script
 .PARAMETER Version
     Display script version information and exit.
 
+.PARAMETER Help
+    Display help information and exit. Supports short option: -h.
+
 .PARAMETER Lang
     Specify the language for script output. Supported values: 'zh' (Chinese) or 'en' (English). Default is 'zh'.
 
@@ -76,6 +79,10 @@ Dev Drive Cache Migration Script
     .\Setup-DevDriveCache.ps1 -Version
     Display script version information.
 
+.EXAMPLE
+    .\Setup-DevDriveCache.ps1 -h
+    Display help information.
+
 .NOTES
     Requires PowerShell 7+ (pwsh) and Windows 11
     
@@ -88,6 +95,7 @@ param(
     [string]$DevDrivePath = "",
     [switch]$DryRun,
     [switch]$Version,
+    [Alias('h')][switch]$Help,
     [ValidateSet('zh', 'en')][string]$Lang = 'en'
 )
 
@@ -98,7 +106,7 @@ $script:CurrentLanguage = $Lang
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.8"
+$script:ScriptVersion = "v0.0.9"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -106,6 +114,12 @@ $script:ProgressIds = @{
     Move        = 1002
     ScanFolders = 1003
 }
+
+# Transfer engine defaults
+$script:ProgressThrottleMs = 200
+$script:RobocopyThreadCount = 32
+$script:RobocopyRetryCount = 1
+$script:RobocopyWaitSeconds = 1
 
 # Ensure any lingering progress UI from previous operations is cleared
 function Reset-ProgressUI {
@@ -1161,11 +1175,11 @@ $script:Strings = @{
     }
 
     CacheMenuTable = @{
-        TableFormat = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
+        TableFormat = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}" }
         # Header/Detail/FolderList use placeholders; values are provided at call sites
-        Header = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
-        Detail = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
-        FolderList = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-8}  {5}" }
+        Header = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}" }
+        Detail = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}" }
+        FolderList = @{ zh = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}"; en = "{0,3}    {1}  {2,8}  {3,-10}  {4,-12}  {5}" }
     }
 
     CacheMenuHeadings = @{
@@ -1181,6 +1195,8 @@ $script:Strings = @{
         Missing = @{ zh = "缺失"; en = "Missing" }
         Exists = @{ zh = "存在"; en = "Exists" }
         Linked = @{ zh = "已联接"; en = "Linked" }
+        MigratedValue = @{ zh = "已迁移"; en = "Migrated" }
+        NotMigratedValue = @{ zh = "未迁移"; en = "Not Migrated" }
     }
 
     DotFolderOperations = @{
@@ -1454,6 +1470,115 @@ function Write-ColoredOutput {
     }
 }
 
+function Get-CacheStatusColor {
+    param([string]$StatusKey)
+
+    switch ($StatusKey) {
+        'CacheMenuStatus.Linked' { return [Colors]::Success }
+        'CacheMenuStatus.Exists' { return [Colors]::Warning }
+        default { return [Colors]::Info }
+    }
+}
+
+function Get-MigrationStateColor {
+    param([bool]$IsMigrated)
+
+    if ($IsMigrated) { return [Colors]::Success }
+    return [Colors]::Warning
+}
+
+function Write-StatusHighlightedRow {
+    param(
+        [Parameter(Mandatory = $true)][string]$RowText,
+        [Parameter(Mandatory = $true)][string]$StatusText,
+        [string]$StatusKey,
+        [string]$MigratedText,
+        [object]$IsMigrated = $null
+    )
+
+    $statusColor = Get-CacheStatusColor -StatusKey $StatusKey
+    $statusIndex = -1
+    if (-not [string]::IsNullOrEmpty($StatusText)) {
+        $statusIndex = $RowText.IndexOf($StatusText, [System.StringComparison]::Ordinal)
+    }
+
+    $migratedColor = [Colors]::Info
+    $hasMigratedState = $false
+    if ($null -ne $IsMigrated) {
+        $rawMigrated = [string]$IsMigrated
+        if (-not [string]::IsNullOrWhiteSpace($rawMigrated)) {
+            $migratedBool = $false
+            if ($IsMigrated -is [bool]) {
+                $migratedBool = [bool]$IsMigrated
+                $hasMigratedState = $true
+            } elseif ($IsMigrated -is [int] -or $IsMigrated -is [long]) {
+                $migratedBool = ([int64]$IsMigrated -ne 0)
+                $hasMigratedState = $true
+            } else {
+                $parsed = $false
+                if ([bool]::TryParse($rawMigrated, [ref]$parsed)) {
+                    $migratedBool = $parsed
+                    $hasMigratedState = $true
+                }
+            }
+
+            if ($hasMigratedState) {
+                $migratedColor = Get-MigrationStateColor -IsMigrated $migratedBool
+            }
+        }
+    }
+    $migratedIndex = -1
+    if (-not [string]::IsNullOrEmpty($MigratedText)) {
+        $searchStart = 0
+        if ($statusIndex -ge 0) { $searchStart = $statusIndex + $StatusText.Length }
+        $migratedIndex = $RowText.IndexOf($MigratedText, $searchStart, [System.StringComparison]::Ordinal)
+        if ($migratedIndex -lt 0) {
+            $migratedIndex = $RowText.IndexOf($MigratedText, [System.StringComparison]::Ordinal)
+        }
+    }
+
+    $tokens = @()
+    if ($statusIndex -ge 0 -and $statusColor -ne [Colors]::Info) {
+        $tokens += [pscustomobject]@{
+            Index = $statusIndex
+            Length = $StatusText.Length
+            Text = $StatusText
+            Color = $statusColor
+        }
+    }
+    if ($migratedIndex -ge 0 -and $hasMigratedState -and $migratedColor -ne [Colors]::Info) {
+        $tokens += [pscustomobject]@{
+            Index = $migratedIndex
+            Length = $MigratedText.Length
+            Text = $MigratedText
+            Color = $migratedColor
+        }
+    }
+
+    if ($tokens.Count -eq 0) {
+        Write-ColoredOutput $RowText [Colors]::Info
+        return
+    }
+
+    $tokens = $tokens | Sort-Object Index
+    $cursor = 0
+    foreach ($t in $tokens) {
+        if ($t.Index -lt $cursor) { continue }
+        $segmentLen = $t.Index - $cursor
+        if ($segmentLen -gt 0) {
+            Write-ColoredOutput ($RowText.Substring($cursor, $segmentLen)) [Colors]::Info -NoNewline
+        }
+        Write-ColoredOutput $t.Text $t.Color -NoNewline
+        $cursor = $t.Index + $t.Length
+    }
+
+    if ($cursor -lt $RowText.Length) {
+        Write-ColoredOutput ($RowText.Substring($cursor)) [Colors]::Info
+    } else {
+        Write-Host ""
+    }
+}
+
 # 等待任意键，无需按回车；若 RawUI 不可用则回退到 Read-Host
 function Wait-ForAnyKey {
     param(
@@ -1495,6 +1620,38 @@ function Test-IsDirectoryLink {
 
 # 将字符串格式化为固定宽度，可选择省略号
 # Format a string to fixed width with optional ellipsis
+function Get-CharDisplayWidth {
+    param([int]$CodePoint)
+
+    if (
+        ($CodePoint -ge 0x1100 -and $CodePoint -le 0x115F) -or
+        ($CodePoint -ge 0x2E80 -and $CodePoint -le 0xA4CF) -or
+        ($CodePoint -ge 0xAC00 -and $CodePoint -le 0xD7A3) -or
+        ($CodePoint -ge 0xF900 -and $CodePoint -le 0xFAFF) -or
+        ($CodePoint -ge 0xFE10 -and $CodePoint -le 0xFE19) -or
+        ($CodePoint -ge 0xFE30 -and $CodePoint -le 0xFE6F) -or
+        ($CodePoint -ge 0xFF00 -and $CodePoint -le 0xFF60) -or
+        ($CodePoint -ge 0xFFE0 -and $CodePoint -le 0xFFE6) -or
+        ($CodePoint -ge 0x1F300 -and $CodePoint -le 0x1FAFF) -or
+        ($CodePoint -ge 0x20000 -and $CodePoint -le 0x3FFFD)
+    ) {
+        return 2
+    }
+
+    return 1
+}
+
+function Get-DisplayWidth {
+    param([string]$Text)
+
+    if ($null -eq $Text) { return 0 }
+    $w = 0
+    foreach ($ch in ([string]$Text).ToCharArray()) {
+        $w += Get-CharDisplayWidth -CodePoint ([int][char]$ch)
+    }
+    return $w
+}
+
 function Format-FixedWidth {
     param(
         [Parameter(Mandatory=$true)][string]$Text,
@@ -1504,13 +1661,62 @@ function Format-FixedWidth {
 
     if ($null -eq $Text) { $Text = '' }
     $t = [string]$Text
-    if ($t.Length -le $Width) {
-        if ($Align -eq 'Right') { return ("{0,$Width}" -f $t) }
-        return ("{0,-$Width}" -f $t)
+    if ($Width -le 0) { return '' }
+
+    $displayWidth = Get-DisplayWidth -Text $t
+    if ($displayWidth -eq $Width) { return $t }
+    if ($displayWidth -lt $Width) {
+        $pad = ' ' * ($Width - $displayWidth)
+        if ($Align -eq 'Right') { return ($pad + $t) }
+        return ($t + $pad)
     }
-    if ($Width -le 1) { return $t.Substring(0, [Math]::Max(0,$Width)) }
-    if ($Align -eq 'Right') { return ('…' + $t.Substring($t.Length-($Width-1))) }
-    return ($t.Substring(0, $Width-1) + '…')
+
+    if ($Width -eq 1) { return '…' }
+
+    $target = $Width - 1
+    if ($Align -eq 'Right') {
+        $kept = New-Object System.Collections.Generic.List[char]
+        $acc = 0
+        for ($i = $t.Length - 1; $i -ge 0; $i--) {
+            $ch = $t[$i]
+            $cw = Get-CharDisplayWidth -CodePoint ([int][char]$ch)
+            if (($acc + $cw) -gt $target) { break }
+            $kept.Insert(0, $ch)
+            $acc += $cw
+        }
+        return ('…' + (-join $kept))
+    }
+
+    $chars = New-Object System.Collections.Generic.List[char]
+    $used = 0
+    for ($i = 0; $i -lt $t.Length; $i++) {
+        $ch = $t[$i]
+        $cw = Get-CharDisplayWidth -CodePoint ([int][char]$ch)
+        if (($used + $cw) -gt $target) { break }
+        [void]$chars.Add($ch)
+        $used += $cw
+    }
+    return ((-join $chars) + '…')
+}
+
+function Format-CacheTableRow {
+    param(
+        [Parameter(Mandatory = $true)][string]$No,
+        [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Size,
+        [Parameter(Mandatory = $true)][string]$Status,
+        [Parameter(Mandatory = $true)][string]$Migrated,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $noCell = Format-FixedWidth -Text $No -Width 3 -Align Right
+    $nameCell = Format-FixedWidth -Text $Name -Width 27 -Align Left
+    $sizeCell = Format-FixedWidth -Text $Size -Width 8 -Align Right
+    $statusCell = Format-FixedWidth -Text $Status -Width 10 -Align Left
+    $migratedCell = Format-FixedWidth -Text $Migrated -Width 12 -Align Left
+    $pathCell = Format-FixedWidth -Text $Path -Width 60 -Align Left
+
+    return ("{0}    {1}  {2}  {3}  {4}  {5}" -f $noCell, $nameCell, $sizeCell, $statusCell, $migratedCell, $pathCell)
 }
 
 # Env var backup removed: script does not back up environment variables
@@ -1680,20 +1886,20 @@ function Show-CacheMenuEx {
     Write-ColoredOutput (Get-String -Key "CacheMenu.ExtraTitle") [Colors]::Menu
     Write-Host ""
     $idxH = Get-String -Key "CacheMenuHeadings.No"
-    $nameH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Name") -Width 27 -Align Left
+    $nameH = Get-String -Key "CacheMenuHeadings.Name"
     $sizeH = Get-String -Key "CacheMenuHeadings.Size"
     $statusH = Get-String -Key "CacheMenuHeadings.Status"
     $migrH = Get-String -Key "CacheMenuHeadings.Migrated"
-    $pathH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Path") -Width 60 -Align Left
-    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Header" -Arguments @($idxH, $nameH, $sizeH, $statusH, $migrH, $pathH)) [Colors]::Header
+    $pathH = Get-String -Key "CacheMenuHeadings.Path"
+    Write-ColoredOutput (Format-CacheTableRow -No $idxH -Name $nameH -Size $sizeH -Status $statusH -Migrated $migrH -Path $pathH) [Colors]::Header
     $dash = '-'
     $idxD = $dash * 3
     $nameD = $dash * 27
     $sizeD = $dash * 8
     $statusD = $dash * 10
-    $migrD = $dash * 8
+    $migrD = $dash * 12
     $pathD = $dash * 60
-    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Detail" -Arguments @($idxD, $nameD, $sizeD, $statusD, $migrD, $pathD)) [Colors]::Header
+    Write-ColoredOutput (Format-CacheTableRow -No $idxD -Name $nameD -Size $sizeD -Status $statusD -Migrated $migrD -Path $pathD) [Colors]::Header
 
     # Create a sorted list of keys based on cache name for consistent menu ordering
     $sortedKeys = $Configs.Keys | Sort-Object { $Configs[$_].Name }
@@ -1709,15 +1915,14 @@ function Show-CacheMenuEx {
         $statusText = Get-String -Key $statusKey
         # compute display fields
         $isMigrated = $isLinked
-        $migratedText = $isMigrated ? 'Yes' : 'No'
-        $nameDisp = Format-FixedWidth -Text $config.Name -Width 27 -Align Left
+        $migratedText = if ($isMigrated) { Get-String -Key "CacheMenuStatus.MigratedValue" } else { Get-String -Key "CacheMenuStatus.NotMigratedValue" }
+        $nameDisp = $config.Name
         $pathRaw = if ($exists) {
             $config.DefaultPath
         } else {
             $missingTag = Get-String -Key "CacheMenuStatus.Missing"
             "[{0}] {1}" -f $missingTag, $config.DefaultPath
         }
-        $pathDisp = Format-FixedWidth -Text $pathRaw -Width 60 -Align Left
         $sizeValue = '-'
         if (-not $DryRun -and $exists -and -not $isLinked) {
             $sizeBytes = Get-FolderSizeBytes -Path $config.DefaultPath
@@ -1731,7 +1936,8 @@ function Show-CacheMenuEx {
             if ($DryRun) { $sizeValue = '-' }
             elseif ($isLinked) { $sizeValue = '-' }
         }
-        Write-ColoredOutput (Get-String -Key "CacheMenuTable.TableFormat" -Arguments @($index, $nameDisp, $sizeValue, $statusText, $migratedText, $pathDisp)) [Colors]::Info
+        $rowText = Format-CacheTableRow -No ([string]$index) -Name $nameDisp -Size $sizeValue -Status $statusText -Migrated $migratedText -Path $pathRaw
+        Write-StatusHighlightedRow -RowText $rowText -StatusText $statusText -StatusKey $statusKey -MigratedText $migratedText -IsMigrated $isMigrated
     }
 
   
@@ -1843,6 +2049,7 @@ function Copy-DirectoryWithProgress {
     if ($total -eq 0) { return }
 
     $progressId = $script:ProgressIds.Copy
+    $lastProgressWrite = [datetime]::UtcNow.AddMilliseconds(-$script:ProgressThrottleMs)
     for ($i = 0; $i -lt $total; $i++) {
         $f = $files[$i]
         $rel = Get-SafeRelativePath -BasePath $SourcePath -ChildPath $f.FullName
@@ -1850,8 +2057,13 @@ function Copy-DirectoryWithProgress {
         $destDir = Split-Path -Path $destFile -Parent
         if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-        $pct = [int]((($i + 1) / $total) * 100)
-        Write-Progress -Id $progressId -Activity "Copying files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
+        $now = [datetime]::UtcNow
+        $isLast = ($i -eq ($total - 1))
+        if ((($now - $lastProgressWrite).TotalMilliseconds -ge $script:ProgressThrottleMs) -or $isLast) {
+            $pct = [int]((($i + 1) / $total) * 100)
+            Write-Progress -Id $progressId -Activity "Copying files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
+            $lastProgressWrite = $now
+        }
 
         Copy-Item -LiteralPath $f.FullName -Destination $destFile -Force -ErrorAction Stop
     }
@@ -1889,6 +2101,7 @@ function Move-DirectoryContentsWithProgress {
     }
 
     $progressId = $script:ProgressIds.Move
+    $lastProgressWrite = [datetime]::UtcNow.AddMilliseconds(-$script:ProgressThrottleMs)
     for ($i = 0; $i -lt $total; $i++) {
         $f = $files[$i]
         $rel = $f.FullName.Substring($SourcePath.Length).TrimStart('\\','/')
@@ -1897,12 +2110,88 @@ function Move-DirectoryContentsWithProgress {
         $destDir = Split-Path -Path $destFile -Parent
         if ($destDir -and -not (Test-Path -LiteralPath $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
 
-        $pct = [int]((($i + 1) / $total) * 100)
-        Write-Progress -Id $progressId -Activity "Moving files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
+        $now = [datetime]::UtcNow
+        $isLast = ($i -eq ($total - 1))
+        if ((($now - $lastProgressWrite).TotalMilliseconds -ge $script:ProgressThrottleMs) -or $isLast) {
+            $pct = [int]((($i + 1) / $total) * 100)
+            Write-Progress -Id $progressId -Activity "Moving files..." -Status ("{0}/{1} {2}" -f ($i+1), $total, $rel) -PercentComplete $pct
+            $lastProgressWrite = $now
+        }
 
         Move-Item -LiteralPath $f.FullName -Destination $destFile -Force -ErrorAction Stop
     }
     Write-Progress -Id $progressId -Activity "Moving files..." -Completed
+}
+
+function Invoke-RobocopyTransfer {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [ValidateSet('Copy', 'Move')][string]$Mode = 'Copy',
+        [switch]$DryRun
+    )
+
+    if (-not (Test-Path -LiteralPath $SourcePath)) { return }
+
+    if (-not (Test-Path -LiteralPath $DestinationPath)) {
+        if (-not $DryRun) { New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null }
+    }
+
+    $baseArgs = @(
+        $SourcePath,
+        $DestinationPath,
+        '/E',
+        '/COPY:DAT',
+        '/DCOPY:DAT',
+        "/R:$($script:RobocopyRetryCount)",
+        "/W:$($script:RobocopyWaitSeconds)",
+        "/MT:$($script:RobocopyThreadCount)",
+        '/NFL',
+        '/NDL',
+        '/NJH',
+        '/NJS',
+        '/NP',
+        '/XJ'
+    )
+
+    if ($Mode -eq 'Move') { $baseArgs += '/MOVE' }
+
+    if ($DryRun) {
+        $pretty = ($baseArgs | ForEach-Object {
+                if ($_ -match '\s') { '"' + $_ + '"' } else { $_ }
+            }) -join ' '
+        Write-ColoredOutput ("      (Dry-run) robocopy {0}" -f $pretty) [Colors]::Warning
+        return
+    }
+
+    $robocopyCmd = Get-Command -Name 'robocopy.exe' -ErrorAction SilentlyContinue
+    if (-not $robocopyCmd) { $robocopyCmd = Get-Command -Name 'robocopy' -ErrorAction SilentlyContinue }
+    if (-not $robocopyCmd) {
+        Write-ColoredOutput "   robocopy command not found, fallback to PowerShell transfer." [Colors]::Warning
+        if ($Mode -eq 'Move') {
+            Move-DirectoryContentsWithProgress -SourcePath $SourcePath -DestinationPath $DestinationPath
+        } else {
+            Copy-DirectoryWithProgress -SourcePath $SourcePath -DestinationPath $DestinationPath
+        }
+        return
+    }
+
+    try {
+        & $robocopyCmd @baseArgs | Out-Null
+    } catch {
+        Write-ColoredOutput ("   robocopy invocation failed, fallback to PowerShell transfer: {0}" -f $_.Exception.Message) [Colors]::Warning
+        if ($Mode -eq 'Move') {
+            Move-DirectoryContentsWithProgress -SourcePath $SourcePath -DestinationPath $DestinationPath
+        } else {
+            Copy-DirectoryWithProgress -SourcePath $SourcePath -DestinationPath $DestinationPath
+        }
+        return
+    }
+
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -gt 7) {
+        throw "robocopy failed with exit code $exitCode"
+    }
 }
 
 function New-MigrationBackupPath {
@@ -1929,6 +2218,92 @@ function New-MigrationBackupPath {
     return [pscustomobject]@{
         Name = $backupName
         Path = $candidate
+    }
+}
+
+function Invoke-TransactionalMigration {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$TargetPath,
+        [Parameter(Mandatory = $true)][string]$BackupPath,
+        [Parameter(Mandatory = $true)][string]$BackupName,
+        [string]$TargetCreationMessageKey = 'Migration.CreatingTargetDirectory'
+    )
+
+    if ($DryRun) {
+        Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning
+        Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step1RenameBackup" -Arguments @($SourcePath, $BackupPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step2CopyFromBackup" -Arguments @($BackupPath, $TargetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step3CreateLink" -Arguments @($SourcePath, $TargetPath)) [Colors]::Info
+        Write-ColoredOutput (Get-String -Key "Migration.Step4DeleteBackup" -Arguments @($BackupPath)) [Colors]::Info
+        return $true
+    }
+
+    $leaf = Split-Path -Path $SourcePath -Leaf
+    $renameComplete = $false
+    $linkCreated = $false
+
+    try {
+        Write-ColoredOutput (Get-String -Key "Migration.RenamingSource" -Arguments @($SourcePath, $BackupPath)) [Colors]::Info
+        Rename-Item -LiteralPath $SourcePath -NewName $BackupName -ErrorAction Stop
+        $renameComplete = $true
+        Write-ColoredOutput (Get-String -Key "Migration.RenameCompleted" -Arguments @($BackupPath)) [Colors]::Success
+
+        if (-not (Test-Path -LiteralPath $TargetPath)) {
+            $parentDir = Split-Path -Path $TargetPath -Parent
+            if ($parentDir -and -not (Test-Path -LiteralPath $parentDir)) {
+                New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
+            }
+            New-Item -ItemType Directory -Path $TargetPath -Force | Out-Null
+            Write-ColoredOutput (Get-String -Key $TargetCreationMessageKey -Arguments @($TargetPath)) [Colors]::Success
+        }
+
+        Write-ColoredOutput (Get-String -Key "Migration.StartingCopy" -Arguments @($BackupPath, $TargetPath)) [Colors]::Info
+        $backupItem = Get-Item -LiteralPath $BackupPath -Force
+        if ($backupItem -and $backupItem.PSIsContainer) {
+            Invoke-RobocopyTransfer -SourcePath $BackupPath -DestinationPath $TargetPath -Mode Copy -DryRun:$false
+        } else {
+            Copy-Item -LiteralPath $BackupPath -Destination $TargetPath -Force -ErrorAction Stop
+        }
+        Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
+
+        Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($SourcePath, $TargetPath)) [Colors]::Info
+        New-Item -ItemType Junction -Path $SourcePath -Target $TargetPath -ErrorAction Stop | Out-Null
+        $linkCreated = $true
+        Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
+
+        Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($BackupPath)) [Colors]::Info
+        Remove-Item -LiteralPath $BackupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
+
+        return $true
+    } catch {
+        $err = $_
+        Write-ColoredOutput (Get-String -Key "Migration.MigrationFailed" -Arguments @($err.Exception.Message)) [Colors]::Error
+
+        if ($linkCreated -and (Test-IsDirectoryLink -Path $SourcePath)) {
+            Write-ColoredOutput (Get-String -Key "Migration.RemovingTemporaryLink" -Arguments @($SourcePath)) [Colors]::Warning
+            try {
+                $null = & cmd /c rmdir "$SourcePath"
+                if ($LASTEXITCODE -ne 0) {
+                    Remove-Item -LiteralPath $SourcePath -Force -ErrorAction Stop -Confirm:$false
+                }
+            } catch {
+                Write-ColoredOutput (Get-String -Key "Migration.RemoveLinkFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
+            }
+        }
+
+        if ($renameComplete -and (Test-Path -LiteralPath $BackupPath)) {
+            Write-ColoredOutput (Get-String -Key "Migration.RestoringBackup" -Arguments @($SourcePath)) [Colors]::Warning
+            try {
+                Rename-Item -LiteralPath $BackupPath -NewName $leaf -ErrorAction Stop
+                Write-ColoredOutput (Get-String -Key "Migration.RestoreCompleted" -Arguments @($SourcePath)) [Colors]::Success
+            } catch {
+                Write-ColoredOutput (Get-String -Key "Migration.RestoreFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
+            }
+        }
+
+        return $false
     }
 }
 
@@ -1993,78 +2368,7 @@ function Move-FolderWithLink {
         }
     }
 
-    # Dry-run: show the planned steps and exit without changes
-    if ($DryRun) {
-        # Dry-run note first
-        Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning
-        Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step1RenameBackup" -Arguments @($SourcePath, $backupPath)) [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step2CopyFromBackup" -Arguments @($backupPath, $targetPath)) [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step3CreateLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
-        Write-ColoredOutput (Get-String -Key "Migration.Step4DeleteBackup" -Arguments @($backupPath)) [Colors]::Info
-        return $true
-    }
-
-    $leaf = Split-Path -Path $SourcePath -Leaf
-    $renameComplete = $false
-    $linkCreated = $false
-
-    try {
-        Write-ColoredOutput (Get-String -Key "Migration.RenamingSource" -Arguments @($SourcePath, $backupPath)) [Colors]::Info
-        Rename-Item -LiteralPath $SourcePath -NewName $backupName -ErrorAction Stop
-        $renameComplete = $true
-        Write-ColoredOutput (Get-String -Key "Migration.RenameCompleted" -Arguments @($backupPath)) [Colors]::Success
-
-        if (-not (Test-Path -LiteralPath $targetPath)) {
-            $parentDir = Split-Path -Path $targetPath -Parent
-            if ($parentDir -and -not (Test-Path -LiteralPath $parentDir)) {
-                New-Item -ItemType Directory -Path $parentDir -Force | Out-Null
-            }
-            New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-            Write-ColoredOutput (Get-String -Key "Migration.CreatingTargetDirectory" -Arguments @($targetPath)) [Colors]::Success
-        }
-
-        Write-ColoredOutput (Get-String -Key "Migration.StartingCopy" -Arguments @($backupPath, $targetPath)) [Colors]::Info
-        Copy-DirectoryWithProgress -SourcePath $backupPath -DestinationPath $targetPath
-        Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
-
-        Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($SourcePath, $targetPath)) [Colors]::Info
-        New-Item -ItemType Junction -Path $SourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-        $linkCreated = $true
-        Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
-
-        Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
-        Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
-
-        return $true
-    } catch {
-        $err = $_
-        Write-ColoredOutput (Get-String -Key "Migration.MigrationFailed" -Arguments @($err.Exception.Message)) [Colors]::Error
-
-        if ($linkCreated -and (Test-IsDirectoryLink -Path $SourcePath)) {
-            Write-ColoredOutput (Get-String -Key "Migration.RemovingTemporaryLink" -Arguments @($SourcePath)) [Colors]::Warning
-            try {
-                $null = & cmd /c rmdir "$SourcePath"
-                if ($LASTEXITCODE -ne 0) {
-                    Remove-Item -LiteralPath $SourcePath -Force -ErrorAction Stop -Confirm:$false
-                }
-            } catch {
-                Write-ColoredOutput (Get-String -Key "Migration.RemoveLinkFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
-            }
-        }
-
-        if ($renameComplete -and (Test-Path -LiteralPath $backupPath)) {
-            Write-ColoredOutput (Get-String -Key "Migration.RestoringBackup" -Arguments @($SourcePath)) [Colors]::Warning
-            try {
-                Rename-Item -LiteralPath $backupPath -NewName $leaf -ErrorAction Stop
-                Write-ColoredOutput (Get-String -Key "Migration.RestoreCompleted" -Arguments @($SourcePath)) [Colors]::Success
-            } catch {
-                Write-ColoredOutput (Get-String -Key "Migration.RestoreFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
-            }
-        }
-
-        return $false
-    }
+    return (Invoke-TransactionalMigration -SourcePath $SourcePath -TargetPath $targetPath -BackupPath $backupPath -BackupName $backupName -TargetCreationMessageKey 'Migration.CreatingTargetDirectory')
 }
 
 function Restore-FolderFromLink {
@@ -2135,8 +2439,7 @@ function Restore-FolderFromLink {
 
     if ($targetExists) {
         Write-ColoredOutput (Get-String -Key "Restore.Step3Restore" -Arguments @($linkTarget, $dest)) [Colors]::Info
-        $moveFrom = Join-Path $linkTarget '*'
-        Move-Item -Path $moveFrom -Destination $dest -Force -ErrorAction Stop
+        Invoke-RobocopyTransfer -SourcePath $linkTarget -DestinationPath $dest -Mode Move -DryRun:$false
 
         Write-ColoredOutput (Get-String -Key "Restore.Step4Cleanup" -Arguments @($linkTarget)) [Colors]::Info
         Remove-Item -LiteralPath $linkTarget -Recurse -Force -ErrorAction Stop -Confirm:$false
@@ -2163,17 +2466,17 @@ function Invoke-DotFolderMigration {
         return
     }
 
-    # Aligned header for: No. (3) + 4sp, Name (27), Size(GB) (8), Status (10), Migrated (8), Path (60)
+    # Aligned header for: No. (3) + 4sp, Name (27), Size(GB) (8), Status (10), Migrated (12), Path (60)
     $idxH = Get-String -Key "CacheMenuHeadings.No"
-    $nameH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Name") -Width 27 -Align Left
+    $nameH = Get-String -Key "CacheMenuHeadings.Name"
     $sizeH = Get-String -Key "CacheMenuHeadings.Size"
     $statusH = Get-String -Key "CacheMenuHeadings.Status"
     $migrH = Get-String -Key "CacheMenuHeadings.Migrated"
-    $pathH = Format-FixedWidth -Text (Get-String -Key "CacheMenuHeadings.Path") -Width 60 -Align Left
-    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Header" -Arguments @($idxH, $nameH, $sizeH, $statusH, $migrH, $pathH)) [Colors]::Header
+    $pathH = Get-String -Key "CacheMenuHeadings.Path"
+    Write-ColoredOutput (Format-CacheTableRow -No $idxH -Name $nameH -Size $sizeH -Status $statusH -Migrated $migrH -Path $pathH) [Colors]::Header
     $dash = '-'
-    $idxD = $dash * 3; $nameD = $dash * 27; $sizeD = $dash * 8; $statusD = $dash * 10; $migrD = $dash * 8; $pathD = $dash * 60
-    Write-ColoredOutput (Get-String -Key "CacheMenuTable.Detail" -Arguments @($idxD, $nameD, $sizeD, $statusD, $migrD, $pathD)) [Colors]::Header
+    $idxD = $dash * 3; $nameD = $dash * 27; $sizeD = $dash * 8; $statusD = $dash * 10; $migrD = $dash * 12; $pathD = $dash * 60
+    Write-ColoredOutput (Format-CacheTableRow -No $idxD -Name $nameD -Size $sizeD -Status $statusD -Migrated $migrD -Path $pathD) [Colors]::Header
 
     $nonEmpty = @()
     if (-not $DryRun) {
@@ -2212,19 +2515,22 @@ function Invoke-DotFolderMigration {
         for ($j=0; $j -lt $nonEmpty.Count; $j++) {
             $dir = $nonEmpty[$j].Dir
             $indexVal = $j + 1
-            $name = Format-FixedWidth -Text $dir.Name -Width 27 -Align Left
+            $name = $dir.Name
             if ($nonEmpty[$j].IsMigrated) {
                 $sizeText = "-"
+                $statusKey = "CacheMenuStatus.Linked"
                 $statusText = Get-String -Key "CacheMenuStatus.Linked"
-                $migratedText = "Yes"
+                $migratedText = Get-String -Key "CacheMenuStatus.MigratedValue"
             } else {
                 $sizeBytes = [long]$nonEmpty[$j].SizeBytes
                 $sizeText = if ($sizeBytes -gt 0) { "{0:N2}" -f ([math]::Round($sizeBytes/1GB, 2)) } else { "0.00" }
+                $statusKey = "CacheMenuStatus.Exists"
                 $statusText = Get-String -Key "CacheMenuStatus.Exists"
-                $migratedText = "No"
+                $migratedText = Get-String -Key "CacheMenuStatus.NotMigratedValue"
             }
-            $pathText = Format-FixedWidth -Text $dir.FullName -Width 60 -Align Left
-            Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($indexVal, $name, $sizeText, $statusText, $migratedText, $pathText)) [Colors]::Info
+            $pathText = $dir.FullName
+            $rowText = Format-CacheTableRow -No ([string]$indexVal) -Name $name -Size $sizeText -Status $statusText -Migrated $migratedText -Path $pathText
+            Write-StatusHighlightedRow -RowText $rowText -StatusText $statusText -StatusKey $statusKey -MigratedText $migratedText -IsMigrated $nonEmpty[$j].IsMigrated
         }
     } else {
         # Dry-run: don't calculate sizes, list all
@@ -2233,12 +2539,14 @@ function Invoke-DotFolderMigration {
             $isMigrated = Test-IsDirectoryLink -Path $dir.FullName
             $nonEmpty += [PSCustomObject]@{ Dir = $dir; SizeBytes = $null; IsMigrated = $isMigrated }
             $indexVal = $i + 1
-            $name = Format-FixedWidth -Text $dir.Name -Width 27 -Align Left
+            $name = $dir.Name
             $sizeText = "-"
-            $statusText = if ($isMigrated) { Get-String -Key "CacheMenuStatus.Linked" } else { Get-String -Key "CacheMenuStatus.Exists" }
-            $migratedText = if ($isMigrated) { "Yes" } else { "No" }
-            $pathText = Format-FixedWidth -Text $dir.FullName -Width 60 -Align Left
-            Write-ColoredOutput (Get-String -Key "CacheMenuTable.FolderList" -Arguments @($indexVal, $name, $sizeText, $statusText, $migratedText, $pathText)) [Colors]::Info
+            $statusKey = if ($isMigrated) { "CacheMenuStatus.Linked" } else { "CacheMenuStatus.Exists" }
+            $statusText = Get-String -Key $statusKey
+            $migratedText = if ($isMigrated) { Get-String -Key "CacheMenuStatus.MigratedValue" } else { Get-String -Key "CacheMenuStatus.NotMigratedValue" }
+            $pathText = $dir.FullName
+            $rowText = Format-CacheTableRow -No ([string]$indexVal) -Name $name -Size $sizeText -Status $statusText -Migrated $migratedText -Path $pathText
+            Write-StatusHighlightedRow -RowText $rowText -StatusText $statusText -StatusKey $statusKey -MigratedText $migratedText -IsMigrated $isMigrated
         }
     }
 
@@ -2405,78 +2713,7 @@ function Move-CacheToDevDrive {
         $backupInfo = New-MigrationBackupPath -SourcePath $sourcePath
         $backupPath = $backupInfo.Path
         $backupName = $backupInfo.Name
-        $migrationSucceeded = $false
-
-        if ($DryRun) {
-            Write-ColoredOutput (Get-String -Key "Migration.DryRunNote") [Colors]::Warning
-            Write-ColoredOutput (Get-String -Key "Migration.StepsHeader") [Colors]::Info
-            Write-ColoredOutput (Get-String -Key "Migration.Step1RenameBackup" -Arguments @($sourcePath, $backupPath)) [Colors]::Info
-            Write-ColoredOutput (Get-String -Key "Migration.Step2CopyFromBackup" -Arguments @($backupPath, $targetPath)) [Colors]::Info
-            Write-ColoredOutput (Get-String -Key "Migration.Step3CreateLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
-            Write-ColoredOutput (Get-String -Key "Migration.Step4DeleteBackup" -Arguments @($backupPath)) [Colors]::Info
-            $migrationSucceeded = $true
-        } else {
-            $renameComplete = $false
-            $linkCreated = $false
-            try {
-                Write-ColoredOutput (Get-String -Key "Migration.RenamingSource" -Arguments @($sourcePath, $backupPath)) [Colors]::Info
-                Rename-Item -LiteralPath $sourcePath -NewName $backupName -ErrorAction Stop
-                $renameComplete = $true
-                Write-ColoredOutput (Get-String -Key "Migration.RenameCompleted" -Arguments @($backupPath)) [Colors]::Success
-
-                if (-not (Test-Path -LiteralPath $targetPath)) {
-                    New-Item -ItemType Directory -Path $targetPath -Force | Out-Null
-                    Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.CreatingTarget" -Arguments @($targetPath)) [Colors]::Success
-                }
-
-                Write-ColoredOutput (Get-String -Key "Migration.StartingCopy" -Arguments @($backupPath, $targetPath)) [Colors]::Info
-                $backupItem = Get-Item -LiteralPath $backupPath -Force
-                if ($backupItem -and $backupItem.PSIsContainer) {
-                    Copy-DirectoryWithProgress -SourcePath $backupPath -DestinationPath $targetPath
-                } else {
-                    Copy-Item -LiteralPath $backupPath -Destination $targetPath -Force -ErrorAction Stop
-                }
-                Write-ColoredOutput (Get-String -Key "Migration.CopyCompleted") [Colors]::Success
-
-                Write-ColoredOutput (Get-String -Key "Migration.CreatingSymbolicLink" -Arguments @($sourcePath, $targetPath)) [Colors]::Info
-                New-Item -ItemType Junction -Path $sourcePath -Target $targetPath -ErrorAction Stop | Out-Null
-                $linkCreated = $true
-                Write-ColoredOutput (Get-String -Key "Migration.SymbolicLinkCreated") [Colors]::Success
-
-                Write-ColoredOutput (Get-String -Key "Migration.DeletingSource" -Arguments @($backupPath)) [Colors]::Info
-                Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Stop -Confirm:$false
-
-                $migrationSucceeded = $true
-            } catch {
-                $err = $_
-                Write-ColoredOutput (Get-String -Key "Migration.MigrationFailed" -Arguments @($err.Exception.Message)) [Colors]::Error
-
-                if ($linkCreated -and (Test-IsDirectoryLink -Path $sourcePath)) {
-                    Write-ColoredOutput (Get-String -Key "Migration.RemovingTemporaryLink" -Arguments @($sourcePath)) [Colors]::Warning
-                    try {
-                        $null = & cmd /c rmdir "$sourcePath"
-                        if ($LASTEXITCODE -ne 0) {
-                            Remove-Item -LiteralPath $sourcePath -Force -ErrorAction Stop -Confirm:$false
-                        }
-                    } catch {
-                        Write-ColoredOutput (Get-String -Key "Migration.RemoveLinkFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
-                    }
-                }
-
-                if ($renameComplete -and (Test-Path -LiteralPath $backupPath)) {
-                    Write-ColoredOutput (Get-String -Key "Migration.RestoringBackup" -Arguments @($sourcePath)) [Colors]::Warning
-                    try {
-                        $originalName = Split-Path -Path $sourcePath -Leaf
-                        Rename-Item -LiteralPath $backupPath -NewName $originalName -ErrorAction Stop
-                        Write-ColoredOutput (Get-String -Key "Migration.RestoreCompleted" -Arguments @($sourcePath)) [Colors]::Success
-                    } catch {
-                        Write-ColoredOutput (Get-String -Key "Migration.RestoreFailed" -Arguments @($_.Exception.Message)) [Colors]::Error
-                    }
-                }
-
-                return $false
-            }
-        }
+        $migrationSucceeded = Invoke-TransactionalMigration -SourcePath $sourcePath -TargetPath $targetPath -BackupPath $backupPath -BackupName $backupName -TargetCreationMessageKey 'CacheMigrationDetails.CreatingTarget'
 
         if ($migrationSucceeded) {
             Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.MigrationSuccess") [Colors]::Success
@@ -2528,8 +2765,33 @@ function Show-Summary {
     Write-ColoredOutput (Get-String -Key "CacheMigrationDetails.NoteScriptPurpose") [Colors]::Info
 }
 
+function Show-ScriptHelp {
+    $scriptName = Split-Path -Leaf $PSCommandPath
+    if ([string]::IsNullOrWhiteSpace($scriptName)) { $scriptName = "Setup-DevDriveCache.ps1" }
+
+    Write-ColoredOutput "Dev Drive Cache Migration Script v$script:ScriptVersion" [Colors]::Header
+    Write-Host ""
+    Write-ColoredOutput "Usage:" [Colors]::Info
+    Write-ColoredOutput "  .\$scriptName [-DevDrivePath <path>] [-DryRun] [-Lang <zh|en>]" [Colors]::Info
+    Write-ColoredOutput "  .\$scriptName -Version" [Colors]::Info
+    Write-ColoredOutput "  .\$scriptName -h" [Colors]::Info
+    Write-Host ""
+    Write-ColoredOutput "Options:" [Colors]::Info
+    Write-ColoredOutput "  -DevDrivePath <path>   Specify Dev Drive path (e.g., D:\)" [Colors]::Info
+    Write-ColoredOutput "  -DryRun                Preview actions without changing files" [Colors]::Info
+    Write-ColoredOutput "  -Lang <zh|en>          Output language (default: en)" [Colors]::Info
+    Write-ColoredOutput "  -Version               Show script version and exit" [Colors]::Info
+    Write-ColoredOutput "  -h, -help              Show this help and exit" [Colors]::Info
+}
+
 # Main execution
 function Invoke-Main {
+    # Handle help parameter
+    if ($Help) {
+        Show-ScriptHelp
+        return
+    }
+
     # Handle version parameter
     if ($Version) {
         Write-ColoredOutput "Dev Drive Cache Migration Script v$script:ScriptVersion" [Colors]::Info
