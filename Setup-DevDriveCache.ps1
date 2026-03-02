@@ -102,11 +102,36 @@ param(
 # Global language setting
 $script:CurrentLanguage = $Lang
 
+# Fail fast when the script is not running under PowerShell 7+ (pwsh).
+$script:DetectedShellProcess = $null
+try {
+    $script:DetectedShellProcess = (Get-Process -Id $PID -ErrorAction SilentlyContinue | Select-Object -ExpandProperty ProcessName -ErrorAction SilentlyContinue)
+} catch {
+    $script:DetectedShellProcess = $null
+}
+
+$psVersion = $PSVersionTable.PSVersion
+$isPwsh7OrLater = ($PSVersionTable.PSEdition -eq 'Core' -and $psVersion.Major -ge 7)
+if (-not $isPwsh7OrLater) {
+    $detectedShell = if ($script:DetectedShellProcess) { "$($script:DetectedShellProcess).exe" } else { $Host.Name }
+    Write-Host ""
+    if ($Lang -eq 'zh') {
+        Write-Host "❌ 本脚本仅支持 PowerShell 7+ (pwsh)。" -ForegroundColor Red
+        Write-Host ("当前环境: {0} {1}" -f $detectedShell, $psVersion) -ForegroundColor Yellow
+        Write-Host "请先安装并使用 pwsh 运行脚本。" -ForegroundColor Yellow
+    } else {
+        Write-Host "❌ This script only supports PowerShell 7+ (pwsh)." -ForegroundColor Red
+        Write-Host ("Current environment: {0} {1}" -f $detectedShell, $psVersion) -ForegroundColor Yellow
+        Write-Host "Please install and run this script with pwsh." -ForegroundColor Yellow
+    }
+    exit 1
+}
+
 # 全局严格错误策略：将非终止错误提升为终止错误，禁用异常捕捉机制
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.9"
+$script:ScriptVersion = "v0.0.10"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -123,9 +148,9 @@ $script:RobocopyWaitSeconds = 1
 
 # Ensure any lingering progress UI from previous operations is cleared
 function Reset-ProgressUI {
-    Write-Progress -Id $script:ProgressIds.Copy -Completed -ErrorAction SilentlyContinue
-    Write-Progress -Id $script:ProgressIds.Move -Completed -ErrorAction SilentlyContinue
-    Write-Progress -Id $script:ProgressIds.ScanFolders -Completed -ErrorAction SilentlyContinue
+    Write-Progress -Id $script:ProgressIds.Copy -Activity "" -Completed -ErrorAction SilentlyContinue
+    Write-Progress -Id $script:ProgressIds.Move -Activity "" -Completed -ErrorAction SilentlyContinue
+    Write-Progress -Id $script:ProgressIds.ScanFolders -Activity "" -Completed -ErrorAction SilentlyContinue
 }
 
 $script:Strings = @{
