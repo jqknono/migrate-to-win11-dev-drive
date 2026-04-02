@@ -29,7 +29,6 @@ Dev Drive Cache Migration Script
         - Go (Go modules)
         - Rust (Cargo)
         - VS Code extensions
-        - Windows TEMP/TMP directories
         - JetBrains IDE cache
         - Android SDK cache
         - Chocolatey cache
@@ -96,6 +95,7 @@ param(
     [switch]$DryRun,
     [switch]$Version,
     [Alias('h')][switch]$Help,
+    [switch]$CreateDesktopShortcut,
     [ValidateSet('zh', 'en')][string]$Lang = 'en'
 )
 
@@ -131,7 +131,7 @@ if (-not $isPwsh7OrLater) {
 $ErrorActionPreference = 'Stop'
 
 # Script version
-$script:ScriptVersion = "v0.0.10"
+$script:ScriptVersion = "v0.1.0"
 
 # Progress IDs used for Write-Progress so we can reliably clear stale bars
 $script:ProgressIds = @{
@@ -369,14 +369,6 @@ $script:Strings = @{
         SetACLWarning = @{
             zh = "警告：设置 {0} 的 ACL 失败：{1}"
             en = "Warning: failed to set ACL on {0}: {1}"
-        }
-        SetSystemTempSuccess = @{
-            zh = "   将系统 TEMP/TMP 设置为：{0}"
-            en = "   Set system TEMP/TMP to: {0}"
-        }
-        SetSystemTempFailed = @{
-            zh = "设置系统 TEMP/TMP 失败：{0}"
-            en = "Failed setting system TEMP/TMP: {0}"
         }
         # Backup environment messages removed (symlink-only mode)
     }
@@ -913,10 +905,8 @@ $script:Strings = @{
         }
         OpenSettings = @{ zh = "正在打开 Windows 设置: 磁盘和卷..."; en = "Opening Windows Settings: Disks & volumes..." }
         SelfCreateGuide = @{ zh = "未检测到 Dev Drive。请在 设置 > 系统 > 存储 > 磁盘和卷 中创建一个 Dev Drive（ReFS），完成后重新运行脚本。"; en = "No Dev Drive detected. Please create one in Settings > System > Storage > Disks & volumes (ReFS), then re-run this script." }
-        AdminRequiredMessage = @{
-            zh = "系统范围需要管理员权限。跳过系统TEMP/TMP。"
-            en = "System scope requires Administrator privileges. Skipping system TEMP/TMP."
-        }
+        DetectionTimeout = @{ zh = "⚠️  自动检测超时（10 秒），可能是某些卷未响应。"; en = "⚠️  Auto-detection timed out (10s). Some volumes may be unresponsive." }
+        ManualDriveLetter = @{ zh = "请手动输入 Dev Drive 的盘符（例如 D）: "; en = "Enter Dev Drive letter manually (e.g. D): " }
         # Using message intentionally defined earlier; duplicate removed to avoid hash literal collision
         # PathProvided message intentionally defined earlier; duplicate removed to avoid hash literal collision
  
@@ -1121,12 +1111,13 @@ $script:Strings = @{
     CacheMenuEx = @{
         Options = @{
             OptMigrateDotFolders = @{ zh = "D       用户临时文件迁移 (.xxx)"; en = "D       User Temp Files Migration (.xxx)" }
+            OptDesktopShortcut = @{ zh = "S       创建桌面快捷方式"; en = "S       Create Desktop Shortcut" }
             # OptUndoAll removed from UI (no global undo in this build)
             OptQuit = @{ zh = "Q       退出"; en = "Q       Quit" }
         }
         SelectionPrompt = @{
-            zh = "选择：1-{0}=按编号，D=点文件夹(.xxx)，Q=退出"
-            en = "Select: 1-{0}=By number, D=Dot Folders(.xxx), Q=Quit"
+            zh = "选择：1-{0}=按编号，D=点文件夹(.xxx)，S=桌面快捷方式，Q=退出"
+            en = "Select: 1-{0}=By number, D=Dot Folders(.xxx), S=Desktop Shortcut, Q=Quit"
         }
     }
 
@@ -1238,6 +1229,21 @@ $script:Strings = @{
         Restoring = @{ zh = "正在恢复：{0} ..."; en = "Restoring: {0} ..." }
         Migrating = @{ zh = "正在迁移：{0} ..."; en = "Migrating: {0} ..." }
         SkippedRestore = @{ zh = "跳过恢复。"; en = "Skipped restore." }
+    }
+
+    DesktopShortcut = @{
+        Creating = @{ zh = "正在创建桌面快捷方式..."; en = "Creating desktop shortcut..." }
+        Downloading = @{ zh = "正在从 GitHub 下载最新版本脚本..."; en = "Downloading latest script from GitHub..." }
+        DownloadSuccess = @{ zh = "✅ 脚本下载成功：{0}"; en = "✅ Script downloaded: {0}" }
+        DownloadFailed = @{ zh = "❌ 下载失败：{0}"; en = "❌ Download failed: {0}" }
+        ShortcutCreated = @{ zh = "✅ 桌面快捷方式已创建：{0}"; en = "✅ Desktop shortcut created: {0}" }
+        ShortcutExists = @{ zh = "桌面快捷方式已存在：{0}"; en = "Desktop shortcut already exists: {0}" }
+        ConfirmCreate = @{ zh = "是否在桌面创建最新版脚本的一键启动快捷方式？(Y/N)"; en = "Create a desktop shortcut to launch the latest script? (Y/N)" }
+        MenuOption = @{ zh = "S       创建桌面快捷方式"; en = "S       Create Desktop Shortcut" }
+        OverwriteConfirm = @{ zh = "快捷方式已存在，是否覆盖？(Y/N)"; en = "Shortcut already exists. Overwrite? (Y/N)" }
+        Skipped = @{ zh = "已跳过创建桌面快捷方式。"; en = "Skipped creating desktop shortcut." }
+        ScriptDirCreated = @{ zh = "✅ 已创建脚本目录：{0}"; en = "✅ Script directory created: {0}" }
+        UpdatedVersion = @{ zh = "✅ 已更新到最新版本：{0}"; en = "✅ Updated to latest version: {0}" }
     }
 
     CacheMigrationDetails = @{
@@ -1413,19 +1419,6 @@ $CacheConfigs = [ordered]@{
         EnvVar = "GOPROXY"
         DefaultPath = "$env:USERPROFILE\go\pkg\mod"
         Description = "Go Modules Cache"
-    }
-    "programdatatemp" = @{
-        Name = "ProgramData Temp"
-        EnvVar = ""
-        DefaultPath = "C:\ProgramData\Temp"
-        Description = "Windows ProgramData Temporary Directory"
-    }
-    "temp" = @{
-        Name = "Windows TEMP/TMP"
-        EnvVar = "TEMP,TMP"
-        # Show current TEMP path so menus/details aren't blank
-        DefaultPath = "$env:TEMP"
-        Description = "Windows Temporary Directory"
     }
     "jetbrains" = @{
         Name = "JetBrains IDE Cache"
@@ -1854,14 +1847,74 @@ function Get-DevDrivePath {
 
     Write-ColoredOutput (Get-String -Key "DevDrive.Detecting") [Colors]::Info
 
-    # Ensure result is always an array to avoid null indexing
-    $devDrives = @(
-        Get-Volume | Where-Object {
-        $_.FileSystem -eq "ReFS" -and
-        $_.DriveType -eq "Fixed" -and
-        $_.DriveLetter
-        } | Sort-Object DriveLetter
-    )
+    # Run detection in a background job with a 10-second timeout to avoid hangs
+    $detectScript = {
+        $results = @()
+        try {
+            $fixedDrives = @(Get-CimInstance -ClassName Win32_LogicalDisk -Filter 'DriveType=3' -ErrorAction Stop |
+                Where-Object { $_.DeviceID } | Select-Object -ExpandProperty DeviceID)
+
+            foreach ($dl in $fixedDrives) {
+                $letter = $dl.TrimEnd(':','\')
+                try {
+                    $vol = Get-Volume -DriveLetter $letter -ErrorAction SilentlyContinue
+                    if ($vol -and $vol.FileSystem -eq 'ReFS') {
+                        $results += @{
+                            DriveLetter     = $letter
+                            FileSystem      = $vol.FileSystem
+                            FileSystemLabel = $vol.FileSystemLabel
+                            SizeRemaining   = $vol.SizeRemaining
+                            DriveType       = 'Fixed'
+                        }
+                    }
+                } catch { }
+            }
+        } catch {
+            try {
+                $results = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object {
+                    $_.FileSystem -eq "ReFS" -and $_.DriveType -eq "Fixed" -and $_.DriveLetter
+                } | ForEach-Object {
+                    @{
+                        DriveLetter     = $_.DriveLetter
+                        FileSystem      = $_.FileSystem
+                        FileSystemLabel = $_.FileSystemLabel
+                        SizeRemaining   = $_.SizeRemaining
+                        DriveType       = 'Fixed'
+                    }
+                })
+            } catch { }
+        }
+        return $results
+    }
+
+    $detectJob = Start-Job -ScriptBlock $detectScript
+    $completed = Wait-Job -Job $detectJob -Timeout 10
+
+    $devDrives = @()
+    if ($null -ne $completed) {
+        # Job finished within timeout
+        $jobResult = Receive-Job -Job $detectJob -ErrorAction SilentlyContinue
+        foreach ($item in $jobResult) {
+            $devDrives += [PSCustomObject]$item
+        }
+    } else {
+        # Timeout: stop the hung job
+        Stop-Job -Job $detectJob -ErrorAction SilentlyContinue
+        Write-ColoredOutput (Get-String -Key "DevDrive.DetectionTimeout") [Colors]::Warning
+        # Last-resort: ask user to type the drive letter manually
+        $manualLetter = Read-Host (Get-String -Key "DevDrive.ManualDriveLetter")
+        $manualLetter = $manualLetter.Trim().TrimEnd(':','\')
+        if ($manualLetter -match '^[A-Za-z]$') {
+            $devDrives = @([PSCustomObject]@{
+                DriveLetter     = $manualLetter.ToUpper()
+                FileSystem      = 'ReFS'
+                FileSystemLabel = ''
+                SizeRemaining   = 0
+                DriveType       = 'Fixed'
+            })
+        }
+    }
+    Remove-Job -Job $detectJob -Force -ErrorAction SilentlyContinue
 
     if ($devDrives.Count -eq 0) {
         Write-ColoredOutput (Get-String -Key "DevDrive.NotFound") [Colors]::Error
@@ -1968,6 +2021,7 @@ function Show-CacheMenuEx {
   
     Write-Host ""
     Write-ColoredOutput (Get-String -Key "CacheMenuEx.Options.OptMigrateDotFolders") [Colors]::Menu
+    Write-ColoredOutput (Get-String -Key "CacheMenuEx.Options.OptDesktopShortcut") [Colors]::Menu
     Write-ColoredOutput (Get-String -Key "CacheMenuEx.Options.OptQuit") [Colors]::Menu
     Write-Host ""
 }
@@ -2772,6 +2826,43 @@ function Move-CacheToDevDrive {
 
 
 
+function New-DesktopShortcut {
+    param([switch]$Force)
+
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
+    $shortcutName = if ($script:CurrentLanguage -eq 'zh') { "Dev Drive 缓存迁移.lnk" } else { "Dev Drive Cache Migration.lnk" }
+    $shortcutPath = Join-Path $desktopPath $shortcutName
+
+    # Check existing shortcut
+    if ((Test-Path -LiteralPath $shortcutPath) -and -not $Force) {
+        Write-ColoredOutput (Get-String -Key "DesktopShortcut.ShortcutExists" -Arguments @($shortcutPath)) [Colors]::Warning
+        $reply = Read-Host (Get-String -Key "DesktopShortcut.OverwriteConfirm")
+        if ($reply.Trim().ToUpper() -ne 'Y') {
+            Write-ColoredOutput (Get-String -Key "DesktopShortcut.Skipped") [Colors]::Info
+            return
+        }
+    }
+
+    # Build the iex command that fetches and runs the latest script from GitHub
+    $langArg = $script:CurrentLanguage
+    $scriptUrl = "https://raw.githubusercontent.com/jqknono/migrate-to-win11-dev-drive/main/Setup-DevDriveCache.ps1"
+    $rawCommand = 'iex "& { $(irm ' + $scriptUrl + ') } -Lang ' + $langArg + '"'
+    $escapedCommand = $rawCommand.Replace('"', '""')
+    $fullArgs = '-NoProfile -ExecutionPolicy Bypass -Command "{0}"' -f $escapedCommand
+
+    # Create a Windows Shell .lnk shortcut
+    $shell = New-Object -ComObject WScript.Shell
+    $lnk = $shell.CreateShortcut($shortcutPath)
+    $lnk.TargetPath = "pwsh.exe"
+    $lnk.Arguments = $fullArgs
+    $lnk.WorkingDirectory = $env:USERPROFILE
+    $lnk.Description = if ($script:CurrentLanguage -eq 'zh') { "Dev Drive 缓存迁移工具（在线版）" } else { "Dev Drive Cache Migration Tool (Online)" }
+    $lnk.IconLocation = "pwsh.exe,0"
+    $lnk.Save()
+
+    Write-ColoredOutput (Get-String -Key "DesktopShortcut.ShortcutCreated" -Arguments @($shortcutPath)) [Colors]::Success
+}
+
 function Show-Summary {
     param([array]$ConfiguredCaches)
 
@@ -2835,6 +2926,12 @@ function Invoke-Main {
         exit 1
     }
 
+    # Handle -CreateDesktopShortcut switch: create shortcut then exit
+    if ($CreateDesktopShortcut) {
+        New-DesktopShortcut -Force
+        return
+    }
+
     $configuredCaches = @()
 
     do {
@@ -2854,9 +2951,9 @@ function Invoke-Main {
                 return
             }
             default {
+                if ($choice -match '^[sS]$') { New-DesktopShortcut; Wait-ForAnyKey -Prompt (Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu'); continue }
                 if ($choice -match '^[dD]$') { Invoke-DotFolderMigration -DevDrivePath $devDrivePath; Wait-ForAnyKey -Prompt (Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu'); continue }
                 if ($choice -match '^[mM]$') { Invoke-DotFolderMigration -DevDrivePath $devDrivePath; Wait-ForAnyKey -Prompt (Get-String -Key 'CacheMenu.PressAnyKeyToReturnToMenu'); continue }
-
                 # Parse numeric selection separately to avoid masking runtime errors as input errors
                 $sel = $null
                 if (-not [int]::TryParse($choice, [ref]$sel)) {
@@ -2884,7 +2981,7 @@ function Invoke-Main {
                     } else {
                         # Junction-only mode: proceed to migration details
                         # Display migration operation details before proceeding
-                        $targetPath = if ($selectedKey -eq 'temp') { (Join-Path $DevDrivePath 'Temp') } else { (Join-Path $DevDrivePath ("Cache/" + $selectedKey)) }
+                        $targetPath = Join-Path $DevDrivePath ("Cache/" + $selectedKey)
 
                         Write-ColoredOutput (Get-String -Key "Migration.OperationDetails") [Colors]::Warning
                         Write-ColoredOutput (Get-String -Key "Migration.CacheType" -Arguments @($cfg.Name)) [Colors]::Info
