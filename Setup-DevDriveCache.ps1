@@ -2520,8 +2520,10 @@ function Restore-FolderFromLink {
         Write-ColoredOutput (Get-String -Key "Restore.Step3Restore" -Arguments @($linkTarget, $dest)) [Colors]::Info
         Invoke-RobocopyTransfer -SourcePath $linkTarget -DestinationPath $dest -Mode Move -DryRun:$false
 
-        Write-ColoredOutput (Get-String -Key "Restore.Step4Cleanup" -Arguments @($linkTarget)) [Colors]::Info
-        Remove-Item -LiteralPath $linkTarget -Recurse -Force -ErrorAction Stop -Confirm:$false
+        if (Test-Path -LiteralPath $linkTarget) {
+            Write-ColoredOutput (Get-String -Key "Restore.Step4Cleanup" -Arguments @($linkTarget)) [Colors]::Info
+            Remove-Item -LiteralPath $linkTarget -Recurse -Force -ErrorAction Stop -Confirm:$false
+        }
     } else {
         Write-ColoredOutput (Get-String -Key "Restore.TargetMissing") [Colors]::Info
     }
@@ -3024,5 +3026,7 @@ function Invoke-Main {
     }
 }
 
-# Run main function
-Invoke-Main
+# Run main function only when the script is executed directly.
+if ($MyInvocation.InvocationName -ne '.') {
+    Invoke-Main
+}
